@@ -1,0 +1,51 @@
+{
+	"/(app)": [
+		"src/routes/(app)/+layout.server.ts",
+		"src/routes/(app)/+layout.server.ts"
+	],
+	"/": [],
+	"/(app)/admin": [
+		"src/routes/(app)/+layout.server.ts"
+	],
+	"/(app)/auth/login": [],
+	"/(app)/auth/profile": [
+		"src/routes/(app)/+layout.server.ts"
+	],
+	"/(app)/auth/signup": [],
+	"/(app)/cart": [
+		"src/routes/(app)/+layout.server.ts"
+	],
+	"/(app)/cart/checkout": [
+		"src/routes/(app)/+layout.server.ts"
+	],
+	"/(app)/cart/success": [
+		"src/routes/(app)/+layout.server.ts"
+	],
+	"/(app)/codereview": [
+		"src/routes/(app)/+layout.server.ts"
+	],
+	"/(app)/code/convert": [
+		"src/routes/(app)/+layout.server.ts"
+	],
+	"/(app)/code/insights": [
+		"src/routes/(app)/+layout.server.ts"
+	],
+	"/(app)/databaseinsights": [
+		"src/routes/(app)/+layout.server.ts"
+	],
+	"/(app)/documentinsights": [
+		"src/routes/(app)/+layout.server.ts"
+	],
+	"/(app)/graphUI": [
+		"src/routes/(app)/+layout.server.ts"
+	],
+	"/(app)/jsonParser": [
+		"src/routes/(app)/+layout.server.ts"
+	],
+	"/(app)/memberinsights": [
+		"src/routes/(app)/+layout.server.ts"
+	],
+	"/(app)/webinsights": [
+		"src/routes/(app)/+layout.server.ts"
+	]
+}
