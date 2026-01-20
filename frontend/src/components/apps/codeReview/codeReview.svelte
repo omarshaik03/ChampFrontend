@@ -40,6 +40,9 @@
     // Expandable commit details
     let expandedCommits: Set<string> = new Set();
 
+    // Expandable solutions
+    let expandedSolutions: Set<string> = new Set();
+
     function toggleCommit(commitHash: string) {
         if (expandedCommits.has(commitHash)) {
             expandedCommits.delete(commitHash);
@@ -47,6 +50,15 @@
             expandedCommits.add(commitHash);
         }
         expandedCommits = expandedCommits;
+    }
+
+    function toggleSolution(findingId: string) {
+        if (expandedSolutions.has(findingId)) {
+            expandedSolutions.delete(findingId);
+        } else {
+            expandedSolutions.add(findingId);
+        }
+        expandedSolutions = expandedSolutions;
     }
 
     function getSeverityColor(severity: string): string {
@@ -448,7 +460,8 @@
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {#each review.findings as finding}
+                                            {#each review.findings as finding, findingIdx}
+                                                {@const findingId = `finding-${review.commit_hash}-${findingIdx}`}
                                                 <tr>
                                                     <td>
                                                         <Badge color={getSeverityColor(finding.severity)}>
@@ -456,7 +469,47 @@
                                                         </Badge>
                                                     </td>
                                                     <td><code class="file-path">{finding.file}</code></td>
-                                                    <td>{finding.message}</td>
+                                                    <td>
+                                                        <div>{finding.message}</div>
+                                                        {#if finding.solution}
+                                                            <div class="mt-2">
+                                                                <Button
+                                                                    size="sm"
+                                                                    color="info"
+                                                                    outline
+                                                                    on:click={() => toggleSolution(findingId)}
+                                                                >
+                                                                    <Icon name={expandedSolutions.has(findingId) ? "chevron-up" : "chevron-down"} />
+                                                                    {expandedSolutions.has(findingId) ? "Hide" : "View"} Solution
+                                                                </Button>
+                                                            </div>
+                                                            <Collapse isOpen={expandedSolutions.has(findingId)}>
+                                                                <div class="solution-box mt-2">
+                                                                    {#if finding.original_code}
+                                                                        <div class="code-comparison">
+                                                                            <div class="code-column">
+                                                                                <div class="code-header original">
+                                                                                    <Icon name="x-circle" /> Original Code
+                                                                                </div>
+                                                                                <pre class="solution-code original-code">{finding.original_code}</pre>
+                                                                            </div>
+                                                                            <div class="code-column">
+                                                                                <div class="code-header fixed">
+                                                                                    <Icon name="check-circle" /> Fixed Code
+                                                                                </div>
+                                                                                <pre class="solution-code fixed-code">{finding.solution}</pre>
+                                                                            </div>
+                                                                        </div>
+                                                                    {:else}
+                                                                        <div class="solution-label">
+                                                                            <Icon name="lightbulb-fill" /> Suggested Fix:
+                                                                        </div>
+                                                                        <pre class="solution-code">{finding.solution}</pre>
+                                                                    {/if}
+                                                                </div>
+                                                            </Collapse>
+                                                        {/if}
+                                                    </td>
                                                 </tr>
                                             {/each}
                                         </tbody>
@@ -502,7 +555,8 @@
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {#each review.security_summary.findings as secFinding}
+                                                    {#each review.security_summary.findings as secFinding, secIdx}
+                                                        {@const secFindingId = `sec-finding-${review.commit_hash}-${secIdx}`}
                                                         <tr>
                                                             <td>
                                                                 <Badge color={getSecuritySeverityColor(secFinding.severity)}>
@@ -523,6 +577,44 @@
                                                                 {/if}
                                                                 <p class="mb-1 mt-1 security-description">{secFinding.description}</p>
                                                                 <small class="text-muted"><Icon name="lightbulb" /> {secFinding.recommendation}</small>
+                                                                {#if secFinding.solution}
+                                                                    <div class="mt-2">
+                                                                        <Button
+                                                                            size="sm"
+                                                                            color="info"
+                                                                            outline
+                                                                            on:click={() => toggleSolution(secFindingId)}
+                                                                        >
+                                                                            <Icon name={expandedSolutions.has(secFindingId) ? "chevron-up" : "chevron-down"} />
+                                                                            {expandedSolutions.has(secFindingId) ? "Hide" : "View"} Solution
+                                                                        </Button>
+                                                                    </div>
+                                                                    <Collapse isOpen={expandedSolutions.has(secFindingId)}>
+                                                                        <div class="solution-box mt-2">
+                                                                            {#if secFinding.original_code}
+                                                                                <div class="code-comparison">
+                                                                                    <div class="code-column">
+                                                                                        <div class="code-header original">
+                                                                                            <Icon name="x-circle" /> Original Code
+                                                                                        </div>
+                                                                                        <pre class="solution-code original-code">{secFinding.original_code}</pre>
+                                                                                    </div>
+                                                                                    <div class="code-column">
+                                                                                        <div class="code-header fixed">
+                                                                                            <Icon name="check-circle" /> Fixed Code
+                                                                                        </div>
+                                                                                        <pre class="solution-code fixed-code">{secFinding.solution}</pre>
+                                                                                    </div>
+                                                                                </div>
+                                                                            {:else}
+                                                                                <div class="solution-label">
+                                                                                    <Icon name="lightbulb-fill" /> Suggested Fix:
+                                                                                </div>
+                                                                                <pre class="solution-code">{secFinding.solution}</pre>
+                                                                            {/if}
+                                                                        </div>
+                                                                    </Collapse>
+                                                                {/if}
                                                             </td>
                                                         </tr>
                                                     {/each}
@@ -690,5 +782,89 @@
 
     :global(.btn-group .btn) {
         flex: 1;
+    }
+
+    .solution-box {
+        background-color: #f8f9fa;
+        border-left: 3px solid #17a2b8;
+        padding: 10px;
+        border-radius: 4px;
+        margin-top: 8px;
+    }
+
+    .solution-label {
+        font-weight: 600;
+        color: #17a2b8;
+        margin-bottom: 8px;
+        font-size: 0.9rem;
+    }
+
+    .solution-code {
+        background-color: #1e1e1e;
+        color: #d4d4d4;
+        padding: 10px;
+        border-radius: 4px;
+        font-size: 0.85rem;
+        line-height: 1.5;
+        margin: 0;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+    }
+
+    .code-comparison {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+        margin-top: 8px;
+    }
+
+    @media (max-width: 768px) {
+        .code-comparison {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .code-column {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .code-header {
+        font-weight: 600;
+        padding: 8px 10px;
+        border-radius: 4px 4px 0 0;
+        font-size: 0.85rem;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    .code-header.original {
+        background-color: #fff3cd;
+        color: #856404;
+        border: 1px solid #ffc107;
+        border-bottom: none;
+    }
+
+    .code-header.fixed {
+        background-color: #d4edda;
+        color: #155724;
+        border: 1px solid #28a745;
+        border-bottom: none;
+    }
+
+    .original-code {
+        border: 1px solid #ffc107;
+        border-top: none;
+        border-radius: 0 0 4px 4px;
+        background-color: #2d2d2d;
+    }
+
+    .fixed-code {
+        border: 1px solid #28a745;
+        border-top: none;
+        border-radius: 0 0 4px 4px;
+        background-color: #1e3a1e;
     }
 </style>
