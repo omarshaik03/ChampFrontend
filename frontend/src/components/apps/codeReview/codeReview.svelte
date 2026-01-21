@@ -31,7 +31,11 @@
 
     // Results
     let loading = false;
-    let progress: number | undefined;
+    let progress: number = 0;
+    let progressTotal: number = 0;
+    let progressCurrent: number = 0;
+    let progressStatus: string = "";
+    let currentCommit: string = "";
     let myTimer: Timer;
     let reviews: any[] = [];
     let textOutput = "";
@@ -98,13 +102,15 @@
         reviews = [];
         textOutput = "";
         progress = 0;
+        progressTotal = 0;
+        progressCurrent = 0;
+        progressStatus = "Connecting...";
+        currentCommit = "";
         myTimer?.start();
 
         try {
-            let response;
-
             if (reviewMode === 'upload') {
-                // Upload zip file
+                // Upload zip file (non-streaming)
                 if (!selectedFile) {
                     toasts.push({ message: "Please select a file", color: 'warning' });
                     loading = false;
@@ -125,15 +131,38 @@
                 if (sinceDate) formData.append('since', sinceDate);
                 if (untilDate) formData.append('until', untilDate);
 
-                response = await fetch(`${api_base}/review/upload`, {
+                progressStatus = "Uploading and analyzing...";
+                const response = await fetch(`${api_base}/review/upload`, {
                     method: 'POST',
                     body: formData
                 });
+
+                progress = 100;
+
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.detail || 'Review failed');
+                }
+
+                const data = await response.json();
+
+                if (outputFormat === 'json' && data.reviews) {
+                    reviews = data.reviews;
+                    toasts.push({
+                        message: `Review completed! ${data.commit_count} commit(s) analyzed.`,
+                        color: 'success'
+                    });
+                } else if (outputFormat === 'text' && data.output) {
+                    textOutput = data.output;
+                    toasts.push({
+                        message: `Review completed! ${data.commit_count} commit(s) analyzed.`,
+                        color: 'success'
+                    });
+                }
             } else {
-                // URL review
+                // URL review with streaming progress
                 const formData = new FormData();
                 formData.append('repo_url', repoUrl);
-                formData.append('format', outputFormat);
                 if (maxCommits) formData.append('max_commits', maxCommits.toString());
                 if (sinceDate) formData.append('since', sinceDate);
                 if (untilDate) formData.append('until', untilDate);
@@ -144,33 +173,62 @@
                     formData.append('guidelines_file', selectedGuidelinesFile);
                 }
 
-                response = await fetch(`${api_base}/review/url`, {
+                // Use streaming endpoint for real-time progress
+                const response = await fetch(`${api_base}/review/url/stream`, {
                     method: 'POST',
                     body: formData
                 });
-            }
 
-            progress = 100;
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.detail || 'Review failed');
+                }
 
-            if (!response.ok) {
-                const errData = await response.json();
-                throw new Error(errData.detail || 'Review failed');
-            }
+                // Handle Server-Sent Events stream
+                const reader = response.body?.getReader();
+                const decoder = new TextDecoder();
 
-            const data = await response.json();
+                if (!reader) {
+                    throw new Error('Failed to get response stream');
+                }
 
-            if (outputFormat === 'json' && data.reviews) {
-                reviews = data.reviews;
-                toasts.push({ 
-                    message: `Review completed! ${data.commit_count} commit(s) analyzed.`, 
-                    color: 'success' 
-                });
-            } else if (outputFormat === 'text' && data.output) {
-                textOutput = data.output;
-                toasts.push({ 
-                    message: `Review completed! ${data.commit_count} commit(s) analyzed.`, 
-                    color: 'success' 
-                });
+                let buffer = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                handleStreamEvent(data);
+                            } catch (e) {
+                                // Skip invalid JSON
+                            }
+                        }
+                    }
+                }
+
+                // Process any remaining data in buffer
+                if (buffer.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(buffer.slice(6));
+                        handleStreamEvent(data);
+                    } catch (e) {
+                        // Skip invalid JSON
+                    }
+                }
+
+                if (reviews.length > 0) {
+                    toasts.push({
+                        message: `Review completed! ${reviews.length} commit(s) analyzed.`,
+                        color: 'success'
+                    });
+                }
             }
 
         } catch (err: any) {
@@ -178,7 +236,40 @@
             toasts.push({ message: error, color: 'danger' });
         } finally {
             loading = false;
+            progressStatus = "";
             myTimer?.stop();
+        }
+    }
+
+    function handleStreamEvent(data: any) {
+        switch (data.type) {
+            case 'status':
+                progressStatus = data.message;
+                break;
+            case 'total':
+                progressTotal = data.total;
+                progressStatus = `Found ${data.total} commit(s) to analyze`;
+                break;
+            case 'progress':
+                progressCurrent = data.current;
+                progressTotal = data.total;
+                currentCommit = data.commit;
+                progress = Math.round((data.current / data.total) * 100);
+                progressStatus = `Analyzing commit ${data.current}/${data.total}: ${data.commit}`;
+                break;
+            case 'review':
+                // Add review as it comes in
+                reviews = [...reviews, data.review];
+                break;
+            case 'complete':
+                progress = 100;
+                progressStatus = "Complete!";
+                // Final reviews are already added incrementally
+                break;
+            case 'error':
+                error = data.message;
+                toasts.push({ message: data.message, color: 'danger' });
+                break;
         }
     }
 
@@ -291,32 +382,10 @@
                 </div>
             {/if}
 
-            <!-- Date Range Options -->
-            <div class="row mb-3">
-                <div class="col-md-6">
-                    <label class="form-label">Start Date (Since)</label>
-                    <Input
-                        type="date"
-                        bind:value={sinceDate}
-                        on:keypress={handleKeyDown}
-                    />
-                    <small class="text-muted">Analyze commits from this date onwards</small>
-                </div>
-                <div class="col-md-6">
-                    <label class="form-label">End Date (Until)</label>
-                    <Input
-                        type="date"
-                        bind:value={untilDate}
-                        on:keypress={handleKeyDown}
-                    />
-                    <small class="text-muted">Analyze commits up to this date</small>
-                </div>
-            </div>
-
             <!-- Max Commits Option -->
             <div class="row mb-3">
                 <div class="col-md-12">
-                    <label class="form-label">Maximum Commits to Review (Optional)</label>
+                    <label class="form-label">Maximum Commits to Review</label>
                     <Input
                         type="number"
                         placeholder="10"
@@ -325,7 +394,29 @@
                         max="100"
                         on:keypress={handleKeyDown}
                     />
-                    <small class="text-muted">Limit the number of commits to analyze (leave empty for no limit)</small>
+                    <small class="text-muted">Number of most recent commits to analyze. Leave dates empty to get the latest commits.</small>
+                </div>
+            </div>
+
+            <!-- Date Range Options (Optional) -->
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">Start Date (Optional)</label>
+                    <Input
+                        type="date"
+                        bind:value={sinceDate}
+                        on:keypress={handleKeyDown}
+                    />
+                    <small class="text-muted">Filter commits from this date onwards</small>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">End Date (Optional)</label>
+                    <Input
+                        type="date"
+                        bind:value={untilDate}
+                        on:keypress={handleKeyDown}
+                    />
+                    <small class="text-muted">Filter commits up to this date</small>
                 </div>
             </div>
 
@@ -405,12 +496,34 @@
 
     <!-- Results Section -->
     {#if loading}
-        <Card class="mb-4">
-            <CardBody class="text-center">
-                <Spinner color="primary" />
-                <p class="mt-3">Analyzing commits... <Timer bind:this={myTimer}/>s</p>
-                {#if progress}
-                    <Progress value={progress}>{progress}%</Progress>
+        <Card class="mb-4 progress-card">
+            <CardBody>
+                <div class="d-flex align-items-center mb-3">
+                    <Spinner color="primary" size="sm" class="me-3" />
+                    <div class="flex-grow-1">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <strong>{progressStatus || 'Initializing...'}</strong>
+                            <span class="text-muted"><Timer bind:this={myTimer}/>s</span>
+                        </div>
+                        {#if progressTotal > 0}
+                            <small class="text-muted">
+                                {progressCurrent} of {progressTotal} commits
+                                {#if currentCommit}
+                                    - <code>{currentCommit}</code>
+                                {/if}
+                            </small>
+                        {/if}
+                    </div>
+                </div>
+                <Progress value={progress} class="progress-animated">
+                    {progress}%
+                </Progress>
+                {#if reviews.length > 0 && loading}
+                    <div class="mt-3">
+                        <small class="text-success">
+                            <Icon name="check-circle-fill" /> {reviews.length} commit{reviews.length !== 1 ? 's' : ''} reviewed
+                        </small>
+                    </div>
                 {/if}
             </CardBody>
         </Card>
@@ -866,5 +979,14 @@
         border-top: none;
         border-radius: 0 0 4px 4px;
         background-color: #1e3a1e;
+    }
+
+    .progress-card {
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        border-left: 4px solid #007bff;
+    }
+
+    :global(.progress-animated .progress-bar) {
+        transition: width 0.3s ease-in-out;
     }
 </style>
