@@ -38,6 +38,7 @@
     let currentCommit: string = "";
     let myTimer: Timer;
     let reviews: any[] = [];
+    let failedCommits: string[] = [];
     let textOutput = "";
     let error = "";
 
@@ -100,6 +101,7 @@
         loading = true;
         error = "";
         reviews = [];
+        failedCommits = [];
         textOutput = "";
         progress = 0;
         progressTotal = 0;
@@ -266,9 +268,23 @@
                 progressStatus = "Complete!";
                 // Final reviews are already added incrementally
                 break;
+            case 'rate_limit':
+                // Show rate limit warning but continue
+                progressStatus = data.message;
+                toasts.push({ message: 'Rate limit reached. Waiting before retrying...', color: 'warning' });
+                break;
             case 'error':
-                error = data.message;
-                toasts.push({ message: data.message, color: 'danger' });
+                // Track failed commits and show toast
+                if (data.message.includes('commit')) {
+                    // Extract commit hash from error message
+                    const match = data.message.match(/commit\s+([a-f0-9]+)/i);
+                    if (match) {
+                        failedCommits = [...failedCommits, match[1]];
+                    }
+                }
+                if (!data.message.includes('Rate limit')) {
+                    toasts.push({ message: data.message, color: 'danger' });
+                }
                 break;
         }
     }
@@ -518,11 +534,18 @@
                 <Progress value={progress} class="progress-animated">
                     {progress}%
                 </Progress>
-                {#if reviews.length > 0 && loading}
-                    <div class="mt-3">
-                        <small class="text-success">
-                            <Icon name="check-circle-fill" /> {reviews.length} commit{reviews.length !== 1 ? 's' : ''} reviewed
-                        </small>
+                {#if (reviews.length > 0 || failedCommits.length > 0) && loading}
+                    <div class="mt-3 d-flex gap-3">
+                        {#if reviews.length > 0}
+                            <small class="text-success">
+                                <Icon name="check-circle-fill" /> {reviews.length} commit{reviews.length !== 1 ? 's' : ''} reviewed
+                            </small>
+                        {/if}
+                        {#if failedCommits.length > 0}
+                            <small class="text-danger">
+                                <Icon name="exclamation-triangle-fill" /> {failedCommits.length} failed
+                            </small>
+                        {/if}
                     </div>
                 {/if}
             </CardBody>
@@ -534,6 +557,24 @@
             <CardBody>
                 <div class="text-danger">
                     <Icon name="exclamation-triangle-fill" /> <strong>Error:</strong> {error}
+                </div>
+            </CardBody>
+        </Card>
+    {/if}
+
+    {#if !loading && failedCommits.length > 0}
+        <Card class="mb-4 border-warning">
+            <CardBody>
+                <div class="text-warning">
+                    <Icon name="exclamation-triangle-fill" />
+                    <strong>{failedCommits.length} commit{failedCommits.length !== 1 ? 's' : ''} failed to analyze</strong>
+                    (likely due to rate limiting)
+                </div>
+                <small class="text-muted">
+                    Failed commits: {failedCommits.join(', ')}
+                </small>
+                <div class="mt-2">
+                    <small>Try reducing the number of commits or wait a few minutes before retrying.</small>
                 </div>
             </CardBody>
         </Card>
