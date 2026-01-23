@@ -43,14 +43,17 @@
     let dropdownOpen: boolean = false;
 
     let showConfigManager: boolean = false;
+    let managerInitialView: 'list' | 'create' = 'list';
 
     function handleOpenCreate(): void {
         console.log('LlmConfigSelector: opening create modal');
+        managerInitialView = 'create';
         showConfigManager = true;
     }
 
     function handleOpenManage(): void {
         console.log('LlmConfigSelector: opening manage modal');
+        managerInitialView = 'list';
         showConfigManager = true;
     }
 
@@ -183,21 +186,100 @@
     </div>
 </div>
 
-<!-- LLM Configuration Manager Modal -->
-<Modal isOpen={showConfigManager} toggle={handleCloseConfigManage} size="xl">
-    <ModalHeader toggle={handleCloseConfigManage}>
-        LLM Configuration Manager
-    </ModalHeader>
-    <ModalBody>
-        <LlmConfigManager 
-            on:select={handleCloseConfigManage}
-        />
-    </ModalBody>
-</Modal>
+
+<!-- LLM Configuration Manager Overlay (Custom implementation to avoid z-index/nesting issues) -->
+{#if showConfigManager}
+    <div class="custom-modal-backdrop" on:click={handleCloseConfigManage}></div>
+    <div class="custom-modal-dialog">
+        <div class="custom-modal-content">
+            <div class="custom-modal-header">
+                <h5 class="mb-0">LLM Configuration Manager</h5>
+                <button type="button" class="btn-close" aria-label="Close" on:click={handleCloseConfigManage}></button>
+            </div>
+            <div class="custom-modal-body">
+                <LlmConfigManager 
+                    initialView={managerInitialView}
+                    on:select={handleCloseConfigManage}
+                />
+            </div>
+        </div>
+    </div>
+{/if}
 
 <style>
     /* Dropdown layout */
     :global(.dropdown-menu) {
+        width: 100%;
+        min-width: 300px;
+        z-index: 1050; 
+    }
+    
+    .custom-modal-backdrop {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background-color: rgba(0, 0, 0, 0.5);
+        z-index: 9998;
+    }
+
+    .custom-modal-dialog {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 90%;
+        max-width: 800px;
+        max-height: 90vh;
+        background-color: #fff;
+        border-radius: 0.5rem;
+        box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .custom-modal-content {
+        display: flex;
+        flex-direction: column;
+        max-height: 100%;
+        overflow: hidden;
+    }
+
+    .custom-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem 1rem;
+        border-bottom: 1px solid #dee2e6;
+    }
+
+    .custom-modal-body {
+        position: relative;
+        flex: 1 1 auto;
+        padding: 1rem;
+        overflow-y: auto;
+    }
+
+    .btn-close {
+        box-sizing: content-box;
+        width: 1em;
+        height: 1em;
+        padding: 0.25em 0.25em;
+        color: #000;
+        background: transparent url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23000'%3e%3cpath d='M.293.293a1 1 0 0 1 1.414 0L8 6.586 14.293.293a1 1 0 1 1 1.414 1.414L9.414 8l6.293 6.293a1 1 0 0 1-1.414 1.414L8 9.414l-6.293 6.293a1 1 0 0 1-1.414-1.414L6.586 8 .293 1.707a1 1 0 0 1 0-1.414z'/%3e%3c/svg%3e") center/1em auto no-repeat;
+        border: 0;
+        border-radius: 0.25rem;
+        opacity: 0.5;
+        cursor: pointer;
+    }
+
+    .btn-close:hover {
+        opacity: 0.75;
+    }
+
+    .dropdown-content {
         min-width: 400px;
     }
     

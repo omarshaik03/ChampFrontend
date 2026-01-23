@@ -23,6 +23,7 @@
     export let allowSelection: boolean = true;
     export let showCreateButton: boolean = true;
     export let compact: boolean = false;
+    export let initialView: 'list' | 'create' = 'list';
 
     // State
     let configs = $llmConfigStore.configs;
@@ -36,8 +37,18 @@
     let isLoading = llmConfigStore.isLoading;
     let error = llmConfigStore.error;
 
-    let showCreateModal: boolean = false;
-    let showEditModal: boolean = false;
+    // View state instead of modals for better UX in nested contexts
+    type ViewState = 'list' | 'create' | 'edit';
+    let currentView: ViewState = initialView;
+
+    // Watch for initialView changes to update currentView when prop changes
+    $: if (initialView) {
+        // Only update if we're not already editing/creating or if explicitly requested?
+        // Actually, simple reactivity might be enough if the parent controls it.
+        // But usually initialView is just for mounting. 
+        // We'll leave it as non-reactive for now or check if we need to reset.
+    }
+    
     let showDeleteModal: boolean = false;
     let editingConfig: LlmConfig | null = null;
     let deletingConfig: LlmConfig | null = null;
@@ -45,14 +56,13 @@
     // Reactive declarations
     $: sortedConfigs = configs.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
 
-
     function handleCreateConfig(): void {
-        showCreateModal = true;
+        currentView = 'create';
     }
 
     function handleEditConfig(config: LlmConfig): void {
         editingConfig = config;
-        showEditModal = true;
+        currentView = 'edit';
     }
 
     function handleDeleteConfig(config: LlmConfig): void {
@@ -77,16 +87,17 @@
     }
 
     function handleConfigSaved(event: CustomEvent<{ config: LlmConfig }>): void {
-        showCreateModal = false;
-        showEditModal = false;
+        currentView = 'list';
         editingConfig = null;
     }
 
-    function closeModals(): void {
-        showCreateModal = false;
-        showEditModal = false;
-        showDeleteModal = false;
+    function handleCancelInput(): void {
+        currentView = 'list';
         editingConfig = null;
+    }
+
+    function closeDeleteModal(): void {
+        showDeleteModal = false;
         deletingConfig = null;
     }
 
@@ -122,157 +133,155 @@
 
 <Card class={compact ? 'border-0' : ''}>
     <CardBody>
-        <!-- Header -->
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="mb-0">LLM Configurations</h5>
-            {#if showCreateButton}
-                <Button color="primary" size="sm" on:click={handleCreateConfig}>
-                    + Create New
-                </Button>
-            {/if}
-        </div>
-
-        <!-- Error Display -->
-        {#if $error}
-            <Alert color="danger">
-                <strong>Error:</strong> {$error}
-            </Alert>
-        {/if}
-
-        <!-- Loading State -->
-        {#if $isLoading}
-            <div class="text-center py-4">
-                <Spinner color="primary" />
-                <div class="mt-2">Loading configurations...</div>
-            </div>
-        {:else if sortedConfigs.length === 0}
-            <!-- Empty State -->
-            <div class="text-center py-5">
-                <div class="text-muted mb-3">
-                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10"/>
-                    </svg>
-                </div>
-                <h6>No LLM Configurations</h6>
-                <p class="text-muted">Create your first LLM configuration to get started.</p>
+        {#if currentView === 'list'}
+            <!-- Header -->
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0">LLM Configurations</h5>
                 {#if showCreateButton}
-                    <Button color="primary" on:click={handleCreateConfig}>
-                        Create Configuration
+                    <Button color="primary" size="sm" on:click={handleCreateConfig}>
+                        + Create New
                     </Button>
                 {/if}
             </div>
-        {:else}
-            <!-- Configurations Table -->
-            <div class="table-responsive">
-                <Table hover striped>
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Provider</th>
-                            <th>Status</th>
-                            <th>Last Updated</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {#each sortedConfigs as config}
-                            <tr class={activeConfig?.id === config.id ? 'table-active' : ''}>
-                                <td>
-                                    <div class="d-flex align-items-center">
-                                        <strong>{config.name}</strong>
-                                        {#if activeConfig?.id === config.id}
-                                            <Badge color="success" class="ms-2">Active</Badge>
-                                        {/if}
-                                    </div>
-                                </td>
-                                <td>
-                                    <Badge color={getProviderBadgeColor(config.provider)}>
-                                        {getProviderDisplayName(config.provider)}
-                                    </Badge>
-                                </td>
-                                <td>
-                                    <Badge color={config.isActive ? 'success' : 'secondary'}>
-                                        {config.isActive ? 'Enabled' : 'Disabled'}
-                                    </Badge>
-                                </td>
-                                <td>
-                                    <small class="text-muted">
-                                        {formatDate(config.updatedAt)}
-                                    </small>
-                                </td>
-                                <td>
-                                    <div class="d-flex gap-1">
-                                        {#if allowSelection && activeConfig?.id !== config.id}
-                                            <Button 
-                                                color="outline-primary" 
-                                                size="sm" 
-                                                on:click={() => handleSetActive(config)}
-                                                title="Set as Active"
-                                            >
-                                                Set Active
-                                            </Button>
-                                        {/if}
-                                        <Button 
-                                            color="outline-secondary" 
-                                            size="sm" 
-                                            on:click={() => handleEditConfig(config)}
-                                            title="Edit Configuration"
-                                        >
-                                            Edit
-                                        </Button>
-                                        <Button 
-                                            color="outline-danger" 
-                                            size="sm" 
-                                            on:click={() => handleDeleteConfig(config)}
-                                            title="Delete Configuration"
-                                        >
-                                            Delete
-                                        </Button>
-                                    </div>
-                                </td>
+
+            <!-- Error Display -->
+            {#if $error}
+                <Alert color="danger">
+                    <strong>Error:</strong> {$error}
+                </Alert>
+            {/if}
+
+            <!-- Loading State -->
+            {#if $isLoading}
+                <div class="text-center py-4">
+                    <Spinner color="primary" />
+                    <div class="mt-2">Loading configurations...</div>
+                </div>
+            {:else if sortedConfigs.length === 0}
+                <!-- Empty State -->
+                <div class="text-center py-5">
+                    <div class="text-muted mb-3">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10"/>
+                        </svg>
+                    </div>
+                    <h6>No LLM Configurations</h6>
+                    <p class="text-muted">Create your first LLM configuration to get started.</p>
+                    {#if showCreateButton}
+                        <Button color="primary" on:click={handleCreateConfig}>
+                            Create Configuration
+                        </Button>
+                    {/if}
+                </div>
+            {:else}
+                <!-- Configurations Table -->
+                <div class="table-responsive">
+                    <Table hover striped>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Provider</th>
+                                <th>Status</th>
+                                <th>Last Updated</th>
+                                <th>Actions</th>
                             </tr>
-                        {/each}
-                    </tbody>
-                </Table>
+                        </thead>
+                        <tbody>
+                            {#each sortedConfigs as config}
+                                <tr class={activeConfig?.id === config.id ? 'table-active' : ''}>
+                                    <td>
+                                        <div class="d-flex align-items-center">
+                                            <strong>{config.name}</strong>
+                                            {#if activeConfig?.id === config.id}
+                                                <Badge color="success" class="ms-2">Active</Badge>
+                                            {/if}
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <Badge color={getProviderBadgeColor(config.provider)}>
+                                            {getProviderDisplayName(config.provider)}
+                                        </Badge>
+                                    </td>
+                                    <td>
+                                        <Badge color={config.isActive ? 'success' : 'secondary'}>
+                                            {config.isActive ? 'Enabled' : 'Disabled'}
+                                        </Badge>
+                                    </td>
+                                    <td>
+                                        <small class="text-muted">
+                                            {formatDate(config.updatedAt)}
+                                        </small>
+                                    </td>
+                                    <td>
+                                        <div class="d-flex gap-1">
+                                            {#if allowSelection && activeConfig?.id !== config.id}
+                                                <Button 
+                                                    color="outline-primary" 
+                                                    size="sm" 
+                                                    on:click={() => handleSetActive(config)}
+                                                    title="Set as Active"
+                                                >
+                                                    Set Active
+                                                </Button>
+                                            {/if}
+                                            <Button 
+                                                color="outline-secondary" 
+                                                size="sm" 
+                                                on:click={() => handleEditConfig(config)}
+                                                title="Edit Configuration"
+                                            >
+                                                Edit
+                                            </Button>
+                                            <Button 
+                                                color="outline-danger" 
+                                                size="sm" 
+                                                on:click={() => handleDeleteConfig(config)}
+                                                title="Delete Configuration"
+                                            >
+                                                Delete
+                                            </Button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            {/each}
+                        </tbody>
+                    </Table>
+                </div>
+            {/if}
+        {:else if currentView === 'create'}
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0">Create Configuration</h5>
+                <Button color="link" class="text-secondary p-0" on:click={handleCancelInput}>
+                    ✕ Close
+                </Button>
             </div>
+            <LlmConfigInput 
+                mode="create"
+                compact={true}
+                on:save={handleConfigSaved}
+                on:cancel={handleCancelInput}
+            />
+        {:else if currentView === 'edit'}
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0">Edit Configuration</h5>
+                <Button color="link" class="text-secondary p-0" on:click={handleCancelInput}>
+                    ✕ Close
+                </Button>
+            </div>
+            <LlmConfigInput 
+                mode="edit"
+                configId={editingConfig?.id}
+                compact={true}
+                on:save={handleConfigSaved}
+                on:cancel={handleCancelInput}
+            />
         {/if}
     </CardBody>
 </Card>
 
-<!-- Create Configuration Modal -->
-<Modal isOpen={showCreateModal} toggle={closeModals} size="lg">
-    <ModalHeader toggle={closeModals}>
-        Create LLM Configuration
-    </ModalHeader>
-    <ModalBody>
-        <LlmConfigInput 
-            mode="create"
-            compact={true}
-            on:save={handleConfigSaved}
-            on:cancel={closeModals}
-        />
-    </ModalBody>
-</Modal>
-
-<!-- Edit Configuration Modal -->
-<Modal isOpen={showEditModal} toggle={closeModals} size="lg">
-    <ModalHeader toggle={closeModals}>
-        Edit LLM Configuration
-    </ModalHeader>
-    <ModalBody>
-        <LlmConfigInput 
-            mode="edit"
-            configId={editingConfig?.id}
-            compact={true}
-            on:save={handleConfigSaved}
-            on:cancel={closeModals}
-        />
-    </ModalBody>
-</Modal>
-
 <!-- Delete Confirmation Modal -->
-<Modal isOpen={showDeleteModal} toggle={closeModals}>
-    <ModalHeader toggle={closeModals}>
+<Modal isOpen={showDeleteModal} toggle={closeDeleteModal}>
+    <ModalHeader toggle={closeDeleteModal}>
         Confirm Delete
     </ModalHeader>
     <ModalBody>
@@ -289,7 +298,7 @@
         {/if}
     </ModalBody>
     <ModalFooter>
-        <Button color="secondary" on:click={closeModals}>
+        <Button color="secondary" on:click={closeDeleteModal}>
             Cancel
         </Button>
         <Button color="danger" on:click={confirmDelete}>

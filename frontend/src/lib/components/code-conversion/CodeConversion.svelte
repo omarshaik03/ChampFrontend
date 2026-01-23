@@ -33,7 +33,7 @@
 
     // Remove hardcoded configuration variables - now managed by store
     // Backend API access key (still needed for the backend service)
-    let backendAccessKey: string = 'gAAAAABn-T6znqBZ1n4VLH2cvaPF8wE-OsDRs8EhwzR2JNNz8vSs01TXy6a_khhChIFCPwDPsctXLbmdbKx7TZNOGg-v1hezlA==';
+    let backendAccessKey: string = 'gAAAAABpaq1KvYRhAAf1vOIIDYztdJd8VStSsAn2uERRiWsUHEXVAdjxQX5EP79q_YY-Pin68xpNcuIcoDrmVjKNfEsMgoLaUw==';
 
     // Language management
     let inputSqlLanguage: string = 'Oracle';

@@ -4,6 +4,7 @@
 	import Logs from "../../../components/apps/admin/logs.svelte";
     import Users from "../../../components/apps/admin/users.svelte";
 	import { Heading } from "flowbite-svelte";
+    import { Button } from "@sveltestrap/sveltestrap";
     import { userStore } from "../../../lib/stores/userStore";
 
     let filter: [Boolean, String];
@@ -24,6 +25,9 @@
         </div>
     </div>
 {:else}
+    <div class="flex justify-end mb-4 pt-4 pr-4">
+        <Button color="dark" href="/admin/testing">API Testing Dashboard</Button>
+    </div>
         <Users data={$userStore}/>
     <!-- Overall Title -->
     <Heading tag="h2" class="mb-4 text-2xl font-bold dark:text-white">

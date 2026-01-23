@@ -64,16 +64,9 @@ export interface CodeConversionResponse {
 }
 
 
-let base_url: string | undefined;
-base_url = runtimeConfig.CODE_CONVERSION_URL;
-if(!base_url) {
-	throw new Error("Missing CODE_CONVERSION_URL in runtime config");
-}
-//base_url = "http://localhost:8000";
-let stream_url = `${base_url}/sql/stream`;
-let workflow_url = `${base_url}/sql/workflow`;
-
 export class CodeConversionService {
+	private static readonly STREAM_URL = `${runtimeConfig.CODE_CONVERSION_URL}/sql/stream`;
+	private static readonly WORKFLOW_URL = `${runtimeConfig.CODE_CONVERSION_URL}/sql/workflow`;
 	/**
 	 * Converts code from one SQL language to another using streaming response
 	 * Uses llmConfigStore for configuration management
@@ -86,7 +79,7 @@ export class CodeConversionService {
 	): Promise<Response> {
 		const requestBody = this.buildRequestBody(request, accessKey, configId);
 
-		return fetch(stream_url, {
+		return fetch(CodeConversionService.STREAM_URL, {
 			method: 'POST',
 			signal: controller?.signal,
 			headers: {
@@ -108,7 +101,7 @@ export class CodeConversionService {
 	): Promise<Response> {
 		const requestBody = this.buildWorkflowRequestBody(request, accessKey, configId);
 
-		return fetch(workflow_url, {
+		return fetch(CodeConversionService.WORKFLOW_URL, {
 			method: 'POST',
 			signal: controller?.signal,
 			headers: {
