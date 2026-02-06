@@ -20,7 +20,8 @@ export const nodes = [
 	() => import('./nodes/16'),
 	() => import('./nodes/17'),
 	() => import('./nodes/18'),
-	() => import('./nodes/19')
+	() => import('./nodes/19'),
+	() => import('./nodes/20')
 ];
 
 export const server_loads = [2];
@@ -28,21 +29,22 @@ export const server_loads = [2];
 export const dictionary = {
 		"/(app)": [3,[2]],
 		"/(app)/admin": [4,[2]],
-		"/(app)/auth/login": [5],
-		"/(app)/auth/profile": [6,[2]],
-		"/(app)/auth/signup": [7],
-		"/(app)/cart": [8,[2]],
-		"/(app)/cart/checkout": [9,[2]],
-		"/(app)/cart/success": [10,[2]],
-		"/(app)/codereview": [13,[2]],
-		"/(app)/code/convert": [11,[2]],
-		"/(app)/code/insights": [12,[2]],
-		"/(app)/databaseinsights": [14,[2]],
-		"/(app)/documentinsights": [15,[2]],
-		"/(app)/graphUI": [16,[2]],
-		"/(app)/jsonParser": [17,[2]],
-		"/(app)/memberinsights": [18,[2]],
-		"/(app)/webinsights": [19,[2]]
+		"/(app)/admin/testing": [5,[2]],
+		"/(app)/auth/login": [6],
+		"/(app)/auth/profile": [7,[2]],
+		"/(app)/auth/signup": [8],
+		"/(app)/cart": [9,[2]],
+		"/(app)/cart/checkout": [10,[2]],
+		"/(app)/cart/success": [11,[2]],
+		"/(app)/codereview": [14,[2]],
+		"/(app)/code/convert": [12,[2]],
+		"/(app)/code/insights": [13,[2]],
+		"/(app)/databaseinsights": [15,[2]],
+		"/(app)/documentinsights": [16,[2]],
+		"/(app)/graphUI": [17,[2]],
+		"/(app)/jsonParser": [18,[2]],
+		"/(app)/memberinsights": [19,[2]],
+		"/(app)/webinsights": [20,[2]]
 	};
 
 export const hooks = {

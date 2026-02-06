@@ -1,4 +1,6 @@
 import { llmConfigStore } from '../stores/llmConfigStore';
+import { get } from 'svelte/store';
+import { userStore } from '../stores/userStore';
 import { runtimeConfig } from '../runtime-config';
 
 // Request interfaces - moved from data to service layer
@@ -67,6 +69,90 @@ export interface CodeConversionResponse {
 export class CodeConversionService {
 	private static readonly STREAM_URL = `${runtimeConfig.CODE_CONVERSION_URL}/sql/stream`;
 	private static readonly WORKFLOW_URL = `${runtimeConfig.CODE_CONVERSION_URL}/sql/workflow`;
+	private static readonly TOKENS_URL = `${runtimeConfig.API_BASE_URL}/api/util/get-tokens`; //Make sure this is supplied with two inputs: the input text and the llm name
+	private static readonly LLM_PRICE_URL = `${runtimeConfig.API_BASE_URL}/api/util/get-llm-price`;
+
+	/**
+	 * Gets the number of tokens for a given input using a specified LLM
+	 */
+	static async getTokenCount(
+		input: string,
+		llmName: string
+	): Promise<number> {
+		const user = get(userStore);
+		const token = user?.token;
+
+		if (!token) {
+			console.error('No auth token available for getTokenCount');
+			throw new Error('Authentication required');
+		}
+
+		try {
+			const response = await fetch(this.TOKENS_URL, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'Authorization': `Bearer ${token}`
+				},
+				body: JSON.stringify({
+					input: input,
+					llm: llmName
+				})
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to get token count: ${response.status}`);
+			}
+
+			const data = await response.json();
+			return data.num_tokens || 0;
+		} catch (error) {
+			console.error('Error getting token count:', error);
+			throw error;
+		}
+	}
+
+	/**
+	 * Gets the pricing information for a specified LLM
+	 */
+	static async getLlmPrice(
+		llmName: string
+	): Promise<{ cost_per_input_token: number; cost_per_output_token: number }> {
+		const user = get(userStore);
+		const token = user?.token;
+
+		if (!token) {
+			console.error('No auth token available for getLlmPrice');
+			throw new Error('Authentication required');
+		}
+
+		try {
+			const response = await fetch(this.LLM_PRICE_URL, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'Authorization': `Bearer ${token}`
+				},
+				body: JSON.stringify({
+					llm: llmName
+				})
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to get LLM price: ${response.status}`);
+			}
+
+			const data = await response.json();
+			return {
+				cost_per_input_token: data.cost_per_input_token || 0,
+				cost_per_output_token: data.cost_per_output_token || 0
+			};
+		} catch (error) {
+			console.error('Error getting LLM price:', error);
+			throw error;
+		}
+	}
+
 	/**
 	 * Converts code from one SQL language to another using streaming response
 	 * Uses llmConfigStore for configuration management

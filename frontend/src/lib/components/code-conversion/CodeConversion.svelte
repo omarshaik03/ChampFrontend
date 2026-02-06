@@ -1,6 +1,7 @@
 <script lang="ts">
     import { Container, Col, Row, Icon, Dropdown, DropdownToggle, DropdownMenu, DropdownItem, Spinner, Input, FormGroup, Label, Modal, ModalHeader, ModalBody } from "@sveltestrap/sveltestrap";
     import LineCompare from "./LineCompare.svelte";
+    import CostEstimationModal from "../../../components/common/CostEstimationModal.svelte";
     import { onMount } from "svelte";
     import { 
         availableLanguages,
@@ -31,7 +32,6 @@
         }
     );
 
-    // Remove hardcoded configuration variables - now managed by store
     // Backend API access key (still needed for the backend service)
     let backendAccessKey: string = 'gAAAAABpaq1KvYRhAAf1vOIIDYztdJd8VStSsAn2uERRiWsUHEXVAdjxQX5EP79q_YY-Pin68xpNcuIcoDrmVjKNfEsMgoLaUw==';
 
@@ -81,6 +81,33 @@
 
     // Time record
     let time_taken: number | null = null;
+    let processingStartTime: number | null = null;
+    let displayTime: number = 0;
+    let timerInterval: number | null = null;
+
+    // Cost Estimation Modal state
+    let showCostModal: boolean = false;
+    let costModalLoading: boolean = false;
+    let costModalMode: 'estimation' | 'results' = 'estimation';
+    let costEstimation: {
+        inputTokens: number | null;
+        promptTokens: number | null;
+        sqlCodeTokens: number | null;
+        projectedOutputTokens: number | null;
+        projectedCost: string | null;
+        costPerInputToken: number;
+        costPerOutputToken: number;
+    } = {
+        inputTokens: null,
+        promptTokens: null,
+        sqlCodeTokens: null,
+        projectedOutputTokens: null,
+        projectedCost: null,
+        costPerInputToken: 0,
+        costPerOutputToken: 0,
+    };
+    let costEstimationError: string | null = null;
+    let pendingConversionRequest: CodeConversionRequest | null = null;
 
     // Fetch controller management
     let controller = new AbortController();
@@ -95,6 +122,22 @@
      * Configuration management utilities
      * Updated to use LLM configuration store
      */
+    function getLlmNameFromConfig(config: LlmConfig | null): string {
+        //TODO: Rewrite this to handle all types of LLM options.
+        if (!config) return 'GPT4o';
+        
+        if (config.provider === 'AzureOpenAI') {
+            const azureConfig = config as typeof config & { provider: 'AzureOpenAI' };
+            const model = azureConfig.config.model;
+            // Map common Azure model names to LLMS dictionary keys
+            if (model.includes('gpt-4o') || model.includes('gpt4o')) return 'GPT4o';
+            if (model.includes('gpt-5') || model.includes('gpt5')) return 'GPT5';
+            return 'GPT4o'; // Default fallback
+        }
+        
+        return 'GPT4o'; // Default fallback for other providers
+    }
+
     function validateLlmConfig(): { isValid: boolean; message: string } {
         if (!backendAccessKey) {
             return { isValid: false, message: 'Backend Access Key is required' };
@@ -105,6 +148,204 @@
         }
         
         return { isValid: true, message: '' };
+    }
+
+    /**
+     * Calculates cost estimation based on input tokens and pricing
+     * Uses a smooth formula that scales with SQL code size:
+     * - Small SQL (< 50 tokens): ~15x expansion (lots of explanation/formatting overhead)
+     * - Large SQL (> 1000 tokens): ~1.2x expansion (mostly 1:1 conversion)
+     */
+    function calculateProjectedCost(sqlCodeTokens: number, costPerInputToken: number, costPerOutputToken: number): { projectedOutputTokens: number; projectedCost: string } {
+        // Smooth scaling formula: starts at ~15x for tiny SQL, approaches 1.2x for large SQL
+        // Formula: 1.2 + (14 / (1 + sqlTokens / 100))
+        const multiplier = 1.2 + (14 / (1 + sqlCodeTokens / 100));
+        const projectedOutputTokens = Math.ceil(sqlCodeTokens * multiplier);
+        
+        const inputCost = (sqlCodeTokens * costPerInputToken);
+        const outputCost = (projectedOutputTokens * costPerOutputToken);
+        const totalCost = inputCost + outputCost;
+        
+        return {
+            projectedOutputTokens,
+            projectedCost: totalCost.toFixed(6)
+        };
+    }
+
+    /**
+     * Gets token count and pricing information for cost estimation
+     * Minimum loading duration ensures a consistent UX (prevents spinner flash)
+     */
+    async function estimateCost(): Promise<void> {
+        if (!selectedLlmConfig) {
+            costEstimationError = 'LLM configuration is required';
+            return;
+        }
+
+        costModalLoading = true;
+        costEstimationError = null;
+        const minLoadingDuration = 1000; // milliseconds
+        const loadingStartTime = Date.now();
+
+        try {
+            // Get LLM name from config
+            const llmName = getLlmNameFromConfig(selectedLlmConfig);
+
+            //TODO: Resolve the discrepancy between input tokens on the cost estimation modal and input tokens on the page. Modal has 2-3 more tokens for input.
+            
+            // Construct the EXACT prompt template that the backend uses in sql_convert.py
+            // Python's triple-quoted string starts with a newline
+            let fullInput = `\nYou are an expert SQL developer with deep knowledge of different SQL dialects.\nConvert the following SQL code from ${inputSqlLanguage} to ${targetSqlLanguage}.\n\n`;
+            
+            // specific_instructions gets its own line even if empty
+            fullInput += `${customPrompt || ''}\n\n`;
+            
+            fullInput += `Source SQL Code (${inputSqlLanguage}):\n\`\`\`sql\n${sqlContent.inputContent}\n\`\`\`\n\n`;
+            fullInput += `Provide the fully converted SQL code in ${targetSqlLanguage} dialect.\n`;
+            fullInput += `Ensure all logic, operations, and functionality are preserved in the output.\n`;
+            fullInput += `Focus on correctness, completeness, and adherence to ${targetSqlLanguage} best practices.\n`;
+            fullInput += `Do NOT provide placeholder text or comments like 'code will be provided here'.`;
+            
+            // Get input token count (includes prompt + SQL code)
+            const inputTokens = await CodeConversionService.getTokenCount(
+                fullInput,
+                llmName
+            );
+
+            // Get token count for JUST the SQL code to estimate output size
+            const sqlCodeTokens = await CodeConversionService.getTokenCount(
+                sqlContent.inputContent,
+                llmName
+            );
+
+            // Get LLM pricing
+            const pricing = await CodeConversionService.getLlmPrice(
+                llmName
+            );
+
+            // Calculate projected output tokens based on SQL code only, not full prompt
+            const { projectedOutputTokens, projectedCost } = calculateProjectedCost(
+                sqlCodeTokens,  // Use SQL code tokens for output estimation
+                pricing.cost_per_input_token,
+                pricing.cost_per_output_token
+            );
+
+            // Calculate prompt tokens (full input minus SQL code)
+            const promptTokens = inputTokens - sqlCodeTokens;
+            
+            // But use actual input tokens (with prompt) for cost calculation
+            const actualInputCost = inputTokens * pricing.cost_per_input_token;
+            const estimatedOutputCost = projectedOutputTokens * pricing.cost_per_output_token;
+            const actualProjectedCost = (actualInputCost + estimatedOutputCost).toFixed(6);
+
+            costEstimation = {
+                inputTokens,
+                promptTokens,
+                sqlCodeTokens,
+                projectedOutputTokens,
+                projectedCost: actualProjectedCost,  // Use the corrected cost calculation
+                costPerInputToken: pricing.cost_per_input_token,
+                costPerOutputToken: pricing.cost_per_output_token,
+            };
+        } catch (error) {
+            console.error('Error estimating cost:', error);
+            costEstimationError = error instanceof Error ? error.message : 'Failed to estimate cost';
+        } finally {
+            // Ensure minimum loading duration for consistent UX
+            const elapsedTime = Date.now() - loadingStartTime;
+            const remainingDelay = Math.max(0, minLoadingDuration - elapsedTime);
+            
+            if (remainingDelay > 0) {
+                await new Promise(resolve => setTimeout(resolve, remainingDelay));
+            }
+            
+            costModalLoading = false;
+        }
+    }
+
+    /**
+     * Opens the cost estimation modal and calculates costs
+     */
+    async function openCostModal(): Promise<void> {
+        costModalMode = 'estimation';
+        showCostModal = true;
+        await estimateCost();
+    }
+
+    /**
+     * Opens the results modal with actual conversion data
+     */
+    function openResultsModal(): void {
+        costModalMode = 'results';
+        showCostModal = true;
+    }
+
+    /**
+     * Closes the cost modal
+     */
+    function closeCostModal(): void {
+        showCostModal = false;
+        costEstimationError = null;
+        pendingConversionRequest = null;
+    }
+
+    /**
+     * Proceeds with conversion after cost modal confirmation
+     */
+    async function proceedWithConversion(): Promise<void> {
+        const request = pendingConversionRequest;  // Save request before closing modal
+        closeCostModal();
+        
+        if (!request) {
+            toasts.push({ message: 'Conversion request was lost', color: 'danger' });
+            return;
+        }
+
+        try {
+            time_taken = 0;
+            displayTime = 0;
+            processingStartTime = Date.now();
+            processing = true;
+            resetSqlContent();
+            view = "output_only";
+            
+            // Update display time every 100ms for smooth updates
+            timerInterval = window.setInterval(() => {
+                if (processingStartTime) {
+                    displayTime = (Date.now() - processingStartTime) / 1000;
+                }
+            }, 100);
+            
+            await ConversionManager.execute(
+                request, backendAccessKey, urlBase, selectedLlmConfig!.id, controller, selectedEndpoint,
+                {
+                    onChunk: handleChunk,
+                    onComplete: handleComplete,
+                    onError: handleError
+                }
+            );
+        } catch (error) {
+            console.error('Conversion error:', error);
+            if (error instanceof Error && error.message.includes('401')) {
+                onUnauthorized();
+            }
+            toasts.push({ 
+                message: error instanceof Error ? error.message : 'Conversion failed', 
+                color: 'danger' 
+            });
+        } finally {
+            if (timerInterval !== null) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            processingStartTime = null;
+            processing = false;
+            
+            // Show results modal after successful conversion
+            if (output_tokens && input_tokens && price) {
+                openResultsModal();
+            }
+        }
     }
 
     class ConversionManager {
@@ -122,7 +363,6 @@
             }
         ): Promise<void> {
             let response: Response;
-            
             if (endpoint === 'stream') {
                 response = await CodeConversionService.convertCodeStream(
                     request, backendKey, configId, controller
@@ -191,37 +431,19 @@
             return;
         }
         
-        time_taken = 0;
-        processing = true;
-        resetSqlContent();
-        view = "output_only";
-        
-        try {
-            const request = ConversionManager.buildRequest(
-                sqlContent.inputContent, inputSqlLanguage, 
-                targetSqlLanguage, customPrompt, addExplanation
-            );
-            
-            await ConversionManager.execute(
-                request, backendAccessKey, urlBase, selectedLlmConfig!.id, controller, selectedEndpoint,
-                {
-                    onChunk: handleChunk,
-                    onComplete: handleComplete,
-                    onError: handleError
-                }
-            );
-        } catch (error) {
-            console.error('Conversion error:', error);
-            if (error instanceof Error && error.message.includes('401')) {
-                onUnauthorized();
-            }
-            toasts.push({ 
-                message: error instanceof Error ? error.message : 'Conversion failed', 
-                color: 'danger' 
-            });
-        } finally {
-            processing = false;
+        if (!sqlContent.inputContent.trim()) {
+            toasts.push({ message: 'Please enter SQL code to convert', color: 'danger' });
+            return;
         }
+
+        // Create the conversion request and store it for later execution
+        pendingConversionRequest = ConversionManager.buildRequest(
+            sqlContent.inputContent, inputSqlLanguage, 
+            targetSqlLanguage, customPrompt, addExplanation
+        );
+
+        // Open the cost estimation modal
+        await openCostModal();
     }
 
     class ResponseHandler {
@@ -267,20 +489,26 @@
         );
         
         ResponseHandler.updateTiming(data, (time) => { time_taken = time; });
+
+        // Calculate actual cost if we have output tokens
+        if (output_tokens && input_tokens) {
+            const actualInputCost = input_tokens * costEstimation.costPerInputToken;
+            const actualOutputCost = output_tokens * costEstimation.costPerOutputToken;
+            const actualTotalCost = actualInputCost + actualOutputCost;
+            price = actualTotalCost.toFixed(6);
+        }
     }
 
     /**
      * Handles completion of the conversion process
      */
     function handleComplete(): void {
-        console.log("Conversion completed successfully");
     }
 
     /**
      * Handles errors during the conversion process
      */
     function handleError(reason: string): void {
-        console.error("Conversion failed:", reason);
         toasts.push({ 
             message: `Conversion failed: ${reason}`, 
             color: 'danger' 
@@ -290,6 +518,11 @@
     async function cancel(): Promise<void> {
         controller.abort();
         controller = new AbortController();
+        if (timerInterval !== null) {
+            clearInterval(timerInterval);
+            timerInterval = null;
+        }
+        processingStartTime = null;
         processing = false;
     }
 
@@ -365,6 +598,23 @@
 </script>
 
 <Container fluid>
+    <CostEstimationModal
+        isOpen={showCostModal}
+        isLoading={costModalLoading}
+        mode={costModalMode}
+        inputTokens={costEstimation.inputTokens}
+        promptTokens={costEstimation.promptTokens}
+        sqlCodeTokens={costEstimation.sqlCodeTokens}
+        projectedOutputTokens={costEstimation.projectedOutputTokens}
+        projectedCost={costEstimation.projectedCost}
+        actualOutputTokens={output_tokens}
+        actualCost={price}
+        timeTaken={displayTime}
+        estimationError={costEstimationError}
+        onConfirm={proceedWithConversion}
+        onCancel={closeCostModal}
+    />
+    
     <Row>
         <Col xs="2">
             <br>
@@ -437,16 +687,16 @@
             
             {#if input_tokens || output_tokens || price || time_taken}
                 {#if input_tokens}
-                    <div>Input Tokens: {input_tokens}</div>
+                    <div>Input Tokens: <b>{input_tokens}</b></div>
                 {/if}
                 {#if output_tokens}
-                    <div>Output Tokens: {output_tokens}</div>
+                    <div>Output Tokens: <b>{output_tokens}</b></div>
                 {/if}
-                {#if price}
-                    <div>Estimated Price: {price} USD</div>
+                {#if price} <!-- TODO: Configure this for the Workflow Converion as well. -->
+                    <div>{output_tokens ? 'Actual' : 'Estimated'} Price: <b>${price}</b> USD</div>
                 {/if}
-                {#if time_taken}
-                    <div>Time taken: {time_taken} seconds</div>
+                {#if displayTime}
+                    <div>Time taken: <b>{displayTime.toFixed(2)}</b> seconds</div>
                 {/if}
                 <hr>
             {/if}
@@ -559,10 +809,10 @@
                     </Col>
                 </Row>
             {:else if processing}
-                {#if time_taken !== null}
+                {#if displayTime !== null}
                     <div class="d-flex justify-content-center align-items-center mt-5">
                         <Spinner color="primary" />
-                        <h4 class="m-0 ms-3">{time_taken}s</h4>
+                        <h4 class="m-0 ms-3">{displayTime.toFixed(2)}s</h4>
                     </div>
                 {/if}
             {:else}

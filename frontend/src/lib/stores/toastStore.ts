@@ -9,8 +9,8 @@ export interface ToastNotification {
     header?: string;
 }
 
-// Default timeout in milliseconds
-const DEFAULT_TIMEOUT = 3000;
+// Default timeout in milliseconds (10 seconds for better visibility)
+const DEFAULT_TIMEOUT = 10000;
 
 // Create a writable store to hold active toast notifications
 const toastStore = writable<ToastNotification[]>([]);

@@ -12,7 +12,7 @@ type EnsureDefined<T> = T extends null | undefined ? {} : T;
 type OptionalUnion<U extends Record<string, any>, A extends keyof U = U extends U ? keyof U : never> = U extends unknown ? { [P in Exclude<A, keyof U>]?: never } & U : never;
 export type Snapshot<T = any> = Kit.Snapshot<T>;
 type PageParentData = Omit<EnsureDefined<import('../$types.js').LayoutData>, keyof LayoutData> & EnsureDefined<LayoutData>;
-type LayoutRouteId = RouteId | "/(app)" | "/(app)/admin" | "/(app)/auth/profile" | "/(app)/cart" | "/(app)/cart/checkout" | "/(app)/cart/success" | "/(app)/code/convert" | "/(app)/code/insights" | "/(app)/codereview" | "/(app)/databaseinsights" | "/(app)/documentinsights" | "/(app)/graphUI" | "/(app)/jsonParser" | "/(app)/memberinsights" | "/(app)/webinsights"
+type LayoutRouteId = RouteId | "/(app)" | "/(app)/admin" | "/(app)/admin/testing" | "/(app)/auth/profile" | "/(app)/cart" | "/(app)/cart/checkout" | "/(app)/cart/success" | "/(app)/code/convert" | "/(app)/code/insights" | "/(app)/codereview" | "/(app)/databaseinsights" | "/(app)/documentinsights" | "/(app)/graphUI" | "/(app)/jsonParser" | "/(app)/memberinsights" | "/(app)/webinsights"
 type LayoutParams = RouteParams & {  }
 type LayoutServerParentData = EnsureDefined<import('../$types.js').LayoutServerData>;
 type LayoutParentData = EnsureDefined<import('../$types.js').LayoutData>;

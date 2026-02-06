@@ -6,6 +6,7 @@
 	import Toastwrapper from "../../common/toastwrapper.svelte";
 	import type { User } from "../../../lib/stores/userStore";
     import { userStore } from "../../../lib/stores/userStore";
+    import { toasts } from "$lib/stores/toastStore";
     // LLM config integration
     import { llmConfigStore, modelSupportsTemperature } from "$lib/stores/llmConfigStore";
     import type { LlmConfig } from "$lib/stores/llmConfigStore";
@@ -20,7 +21,7 @@
     // Access key for new CodeInsights microservice (required as form field)
     let accessKey: string = '';
     $: if (user && !accessKey) {
-        accessKey = "gAAAAABopKx2oBlpEJAw9wJCgy-zBu17mTwOnN6o9aPZYgF6g7zzekb0ihlzQiDRKam01TyIhdrGPyvnMz_YhAOmzu4gKGGptg==";
+        accessKey = "gAAAAABpaq1KvYRhAAf1vOIIDYztdJd8VStSsAn2uERRiWsUHEXVAdjxQX5EP79q_YY-Pin68xpNcuIcoDrmVjKNfEsMgoLaUw==";
     }
 
     let removedColor: string = 'lightcoral';
@@ -69,10 +70,12 @@
     async function processFiles(zipFile?: File, reportFile?: File) {
         if (!user) {
             console.log("User not logged in");
+            toasts.push({ message: "User not logged in", color: "danger" });
             return;
         }
         if (!zipFile || !reportFile) {
             console.log("Zip file or report file not provided");
+            toasts.push({ message: "Zip file and report file are required", color: "danger" });
             return;
         }
 
@@ -198,6 +201,7 @@
             if (!response || !response.ok) {
                 if (!aborted) {
                     console.log("Unable to download zip: no valid endpoint responded OK.");
+                    toasts.push({ message: "Unable to process files. Please check access key and try again.", color: "danger" });
                 }
                 return;
             }
@@ -259,8 +263,10 @@
             if ((error as DOMException)?.name === "AbortError") {
                 console.log("Zip processing aborted");
                 aborted = true;
+                toasts.push({ message: "Processing aborted.", color: "warning" });
             } else {
                 console.log("Zip processing error:", error);
+                toasts.push({ message: `An error occurred: ${error}`, color: "danger" });
             }
         } finally {
             if (timerInterval) {
@@ -285,6 +291,7 @@
     async function download() {
         if (!user || !zipContent) {
             console.log("User not logged in or no zip content");
+            toasts.push({ message: "Nothing to download.", color: "info" });
             return;
         }
         // Collect selected files
@@ -327,79 +334,108 @@
     }
 
     async function onChangeZipFileInput() {
-        if (!zipFileInput) {
-            throw new Error('No zip file selected');
+        try {
+            if (!zipFileInput) {
+                return;
+            }
+            const fileList = zipFileInput;
+            let zipFile = fileList[0];
+            if (!zipFile || !zipFile.name.endsWith('.zip')) {
+                toasts.push({ message: 'Invalid file type. Please select a .zip file.', color: 'danger' });
+                zipFileInput = null;
+                return;
+            }
+            inputZip = new JSZip();
+            await inputZip.loadAsync(zipFile);
+            zipContent = {};
+            let inputFiles = inputZip.files;
+            for (let inputFileName in inputFiles) {
+                // Skip directory entries
+                if (inputFiles[inputFileName].dir) continue;
+                let inputContent = await inputFiles[inputFileName].async('string');
+                zipContent[inputFileName] = {
+                    inputContent: inputContent,
+                    outputContent: undefined,
+                    selected: false,
+                    status: "incomplete",
+                };
+            }
+            // Default selection: first file
+            const names = Object.keys(zipContent);
+            if (names.length) {
+                selectedFileName = names[0];
+            } else {
+                selectedFileName = '';
+            }
+            zipContent = { ...zipContent };
+            input_tokens = undefined;
+            output_tokens = undefined;
+            price = undefined;
+        } catch (error) {
+            console.error("Error loading zip file:", error);
+            toasts.push({ message: "Failed to load zip file.", color: "danger" });
         }
-        const fileList = zipFileInput;
-        let zipFile = fileList[0];
-        if (!zipFile || !zipFile.name.endsWith('.zip')) {
-            throw new Error('Invalid file type for zip file');
-        }
-        inputZip = new JSZip();
-        await inputZip.loadAsync(zipFile);
-        zipContent = {};
-        let inputFiles = inputZip.files;
-        for (let inputFileName in inputFiles) {
-            // Skip directory entries
-            if (inputFiles[inputFileName].dir) continue;
-            let inputContent = await inputFiles[inputFileName].async('string');
-            zipContent[inputFileName] = {
-                inputContent: inputContent,
-                outputContent: undefined,
-                selected: false,
-                status: "incomplete",
-            };
-        }
-        // Default selection: first file
-        const names = Object.keys(zipContent);
-        if (names.length) {
-            selectedFileName = names[0];
-        } else {
-            selectedFileName = '';
-        }
-        zipContent = { ...zipContent };
-        input_tokens = undefined;
-        output_tokens = undefined;
-        price = undefined;
     }
 
     async function onChangeReportFileInput() {
-        if (!reportFileInput) {
-            throw new Error('No report file selected');
-        }
-        let reportFile = reportFileInput[0];
-        if (!reportFile || !reportFile.name.endsWith('.txt')) {
-            throw new Error('Invalid file type for report file');
-        }
-        let reader = new FileReader();
-        reader.onload = function(e) {
-            let reportText = reader.result as string;
-            // Parse report to table
-            if (!reportText) {
-                throw new Error('No content in report file');
+        try {
+            if (!reportFileInput) {
+                return;
             }
-            let lines = reportText.split('\n');
-            let columnLengths = lines[1].split(' ').map(x => x.length+1);
-            console.log(lines);
-            console.log(columnLengths);
-            for (let i = 0; i < columnLengths.length; i++) {
-                if (i == 1) {
-                    continue;
-                }
-                let row = [];
-                let line = lines[i]
-                for (let j = 0; j < columnLengths.length; j++) {
-                    row.push(line.substring(0, columnLengths[j]));
-                    line = line.substring(columnLengths[j]);
-                }
-                if (!reportContent) {
-                    reportContent = [];
-                }
-                reportContent.push(row);
+            let reportFile = reportFileInput[0];
+            if (!reportFile || !reportFile.name.endsWith('.txt')) {
+                toasts.push({ message: 'Invalid file type. Please select a .txt file.', color: 'danger' });
+                reportFileInput = null;
+                return;
             }
-            console.log(reportContent);
+            let reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    let reportText = reader.result as string;
+                    // Parse report to table
+                    if (!reportText) {
+                        toasts.push({ message: 'Report file is empty.', color: 'warning' });
+                        return;
+                    }
+                    let lines = reportText.split('\n');
+                    if (lines.length < 2) {
+                        toasts.push({ message: 'Report file format invalid (too short).', color: 'danger' });
+                        return;
+                    }
+                    let columnLengths = lines[1].split(' ').map(x => x.length+1);
+                    console.log(lines);
+                    console.log(columnLengths);
+                    for (let i = 0; i < columnLengths.length; i++) {
+                        if (i == 1) {
+                            continue;
+                        }
+                        let row = [];
+                        let line = lines[i]
+                        for (let j = 0; j < columnLengths.length; j++) {
+                            // Check if line is long enough
+                            if (!line) { 
+                                row.push('');
+                                continue; 
+                            }
+                            row.push(line.substring(0, columnLengths[j]));
+                            line = line.substring(columnLengths[j]);
+                        }
+                        if (!reportContent) {
+                            reportContent = [];
+                        }
+                        reportContent.push(row);
+                    }
+                    console.log(reportContent);
+                } catch (err) {
+                    console.error("Error parsing report:", err);
+                    toasts.push({ message: "Failed to parse report file.", color: "danger" });
+                }
+            }
+            reader.readAsText(reportFile);
+        } catch (error) {
+            console.error("Error reading report file:", error);
+            toasts.push({ message: "Failed to read report file.", color: "danger" });
         }
-        reader.readAsText(reportFile);
     }
 
     // Initialize selected file name
@@ -435,67 +471,73 @@
     {/if}
 <Container fluid>
     <Row>
-        <Col xs="2">
+        <Col xs="3" class="border-end">
             <br>
             <Row>
                 <FormGroup>
-                    <span>Upload a zip file:</span>
-                    <div class="input-group">
-                        <input class="form-control" type="file" bind:files={zipFileInput}/>
+                    <div class="mb-3">
+                        <span class="fw-bold">Upload a zip file:</span>
+                        <div class="input-group">
+                            <input class="form-control" type="file" bind:files={zipFileInput}/>
+                        </div>
                     </div>
-                    <br>
-                    <span>Upload a report file:</span>
-                    <div class="input-group">
-                        <input class="form-control" type="file" bind:files={reportFileInput}/>
+                    <div class="mb-3">
+                        <span class="fw-bold">Upload a report file:</span>
+                        <div class="input-group">
+                            <input class="form-control" type="file" bind:files={reportFileInput}/>
+                        </div>
                     </div>
-                    <br>
-                    <h6 class="mb-2">LLM Configuration</h6>
+                    
+                    <h6 class="mb-2 fw-bold">LLM Configuration</h6>
                     <LlmConfigSelector />
-                    <span>Access Key:</span>
-                    <div class="input-group">
-                        <input class="form-control" type="text" bind:value={accessKey} placeholder="Enter access key" />
+                    
+                    <div class="mt-3 mb-3">
+                        <span class="fw-bold">Access Key:</span>
+                        <div class="input-group">
+                            <input class="form-control" type="text" bind:value={accessKey} placeholder="Enter access key" />
+                        </div>
                     </div>
-                    <br>
-                    <label for="sql_language">Select SQL Language:</label>
-                    <Dropdown direction="down">
-                        <DropdownToggle caret style="background-color:white; color: black;">
-                            {sql_language}
-                        </DropdownToggle>
-                        <DropdownMenu>
-                            <DropdownItem on:click={() => sql_language = 'MS SQL Server'}>MS SQL Server</DropdownItem>
-                            <DropdownItem on:click={() => sql_language = 'Oracle'}>Oracle</DropdownItem>
-                            <DropdownItem on:click={() => sql_language = 'PostgreSQL'}>PostgreSQL</DropdownItem>
-                        </DropdownMenu>
-                    </Dropdown>
-                    <br>
-                    <!-- {#if tokens && zipContent}
-                        <div>Estimated Tokens: {tokens}</div>
-                        <div>Estimated Price: ${price}</div>
-                    {:else if tokens}
-                        <div>Estimated Tokens to process: {tokens}</div>
-                        <div>Estimated Price: ${price}</div>
-                    {/if} -->
-                    <button class="btn btn-secondary" on:click={triggerProcessing}>Process Files</button>
-                    {#if processing}
-                        <button class="btn btn-secondary" on:click={cancel}>Cancel</button>
-                    {/if}
-                    <br>
-                    <label for="watch_process">Watch Process:</label>
-                    <input id="watch_process" type="checkbox" bind:checked={watch_process} />
+
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <label for="sql_language" class="fw-bold me-2 mb-0">SQL Language:</label>
+                        <Dropdown direction="down">
+                            <DropdownToggle caret style="background-color:white; color: black;">
+                                {sql_language}
+                            </DropdownToggle>
+                            <DropdownMenu>
+                                <DropdownItem on:click={() => sql_language = 'MS SQL Server'}>MS SQL Server</DropdownItem>
+                                <DropdownItem on:click={() => sql_language = 'Oracle'}>Oracle</DropdownItem>
+                                <DropdownItem on:click={() => sql_language = 'PostgreSQL'}>PostgreSQL</DropdownItem>
+                            </DropdownMenu>
+                        </Dropdown>
+                    </div>
+
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <button class="btn btn-secondary flex-grow-1" on:click={triggerProcessing}>Process Files</button>
+                        {#if processing}
+                            <button class="btn btn-danger" on:click={cancel}>Cancel</button>
+                        {/if}
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" id="watch_process" type="checkbox" bind:checked={watch_process} />
+                        <label class="form-check-label" for="watch_process">Watch Process</label>
+                    </div>
                 </FormGroup>
                 {#if input_tokens || output_tokens || price || time_taken}
-                    {#if input_tokens}
-                        <div>Input Tokens: {input_tokens}</div>
-                    {/if}
-                    {#if output_tokens}
-                        <div>Output Tokens: {output_tokens}</div>
-                    {/if}
-                    {#if price}
-                        <div>Estimated Price: {price} USD</div>
-                    {/if}
-                    {#if time_taken}
-                        <div>Time taken: {time_taken} seconds</div>
-                    {/if}
+                    <div class="mt-3">
+                        {#if input_tokens}
+                            <div>Input Tokens: {input_tokens}</div>
+                        {/if}
+                        {#if output_tokens}
+                            <div>Output Tokens: {output_tokens}</div>
+                        {/if}
+                        {#if price}
+                            <div>Estimated Price: {price} USD</div>
+                        {/if}
+                        {#if time_taken}
+                            <div>Time taken: {time_taken} seconds</div>
+                        {/if}
+                    </div>
                     <hr>
                 {/if}
             </Row>
@@ -519,7 +561,7 @@
                                     <div class='file-select px-2 d-inline-flex {selectedFileName === fileName ? "active" : ""}' title="{fileName}">
                                         <input type="checkbox" bind:checked={zipContent[fileName].selected} />
                                         <button type="button" class="btn btn-link p-0 ms-1" style="overflow: hidden;" on:click={() => selectedFileName = fileName} aria-label="Select file">
-                                            {`${fileName.substring(0, 20)}...`}
+                                            {`${fileName.substring(0, 35)}...`}
                                         </button>
                                         {#if zipContent[fileName].status == "incomplete"}
                                             <span style="color: red;"><Icon name="x-lg"/></span>
@@ -539,7 +581,12 @@
                 <hr>
                 <Row>
                     <FormGroup>
-                        <Button on:click={download}>Approve and Download</Button>
+                        <Button 
+                            on:click={download} 
+                            disabled={!Object.values(zipContent || {}).some(f => f.status === 'complete')}
+                        >
+                            Approve and Download
+                        </Button>
                     </FormGroup>
                 </Row>
             {/if}
@@ -553,7 +600,7 @@
                 <span><span style="color:{backgroundColor};"><Icon name="square-fill"/></span> - Background</span>
             </Row>
         </Col>
-        <Col xs="10">
+        <Col xs="9">
             {#if selectedFileName == ''}
                 <div class="text-center">
                     <h1>Select a file to view</h1>

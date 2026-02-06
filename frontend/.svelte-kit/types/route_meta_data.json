@@ -7,6 +7,9 @@
 	"/(app)/admin": [
 		"src/routes/(app)/+layout.server.ts"
 	],
+	"/(app)/admin/testing": [
+		"src/routes/(app)/+layout.server.ts"
+	],
 	"/(app)/auth/login": [],
 	"/(app)/auth/profile": [
 		"src/routes/(app)/+layout.server.ts"

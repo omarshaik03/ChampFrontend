@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { Modal, Icon, Input, Button, Spinner, Progress, Card, CardBody, CardTitle, Badge, Table, Collapse } from '@sveltestrap/sveltestrap';
+    import { Modal, Icon, Input, Button, Spinner, Progress, Card, CardBody, CardTitle, Badge, Table, Collapse, Dropdown, DropdownToggle, DropdownMenu, DropdownItem } from '@sveltestrap/sveltestrap';
     import { onMount } from 'svelte';
     import Toastwrapper from '../../common/toastwrapper.svelte';
     import Timer from '../../common/timer.svelte';
@@ -11,12 +11,39 @@
     let user = $userStore;
     let api_base = runtimeConfig.CODE_REVIEW_URL;
 
+    // GitHub authentication state
+    let githubAuth = {
+        authenticated: false,
+        username: '',
+        avatar_url: ''
+    };
+    let githubRepos: any[] = [];
+    let loadingRepos = false;
+    let repoDropdownOpen = false;
+    let repoSearchQuery = '';
+
+    // Azure DevOps authentication state
+    let azureDevOpsAuth = {
+        authenticated: false,
+        display_name: '',
+        email: '',
+        organization: ''
+    };
+    let azdoRepos: any[] = [];
+    let loadingAzdoRepos = false;
+    let azdoRepoDropdownOpen = false;
+    let azdoRepoSearchQuery = '';
+    let azdoOrgInput = '';
+    let settingOrg = false;
+    let selectedAzdoRepo: any = null;
+
     // Review options
-    let reviewMode: 'upload' | 'url' = 'url';
+    let reviewMode: 'upload' | 'url' | 'github' | 'azuredevops' = 'url';
     let repoPath = "";
     let repoUrl = "https://github.com/pallets/click.git";
+    let selectedGithubRepo: any = null;
     let branch = "main";
-    let maxCommits: number | null = 10;
+    let maxCommits: number = 1;
     let outputFormat: 'json' | 'text' = 'json';
 
     // Date range filtering
@@ -41,6 +68,10 @@
     let failedCommits: string[] = [];
     let textOutput = "";
     let error = "";
+
+    // Validation state
+    let validationErrors: {[key: string]: string} = {};
+    let resultsSection: HTMLElement;
 
     // Expandable commit details
     let expandedCommits: Set<string> = new Set();
@@ -97,7 +128,175 @@
         }
     }
 
+    // Validation functions
+    function validateMaxCommits(value: number | string): string | null {
+        if (value === null || value === undefined || value === '') {
+            return 'Please enter the number of commits to review';
+        }
+        const num = typeof value === 'string' ? parseInt(value, 10) : value;
+        if (isNaN(num)) {
+            return 'Please enter a valid whole number';
+        }
+        if (num < 1) {
+            return 'Number of commits must be at least 1';
+        }
+        if (num > 100) {
+            return 'Maximum 100 commits allowed';
+        }
+        if (!Number.isInteger(num)) {
+            return 'Please enter a whole number (no decimals)';
+        }
+        return null;
+    }
+
+    function normalizeMaxCommits() {
+        if (maxCommits !== null && maxCommits !== undefined) {
+            // Normalize inputs like "000001" to 1
+            const normalized = Math.floor(Math.abs(Number(maxCommits)));
+            if (!isNaN(normalized) && normalized >= 1) {
+                maxCommits = Math.min(normalized, 100);
+            } else {
+                maxCommits = 1;
+            }
+        } else {
+            maxCommits = 1;
+        }
+        validateField('maxCommits');
+    }
+
+    function validateDates(): string | null {
+        const today = new Date();
+        today.setHours(23, 59, 59, 999); // End of today
+
+        if (sinceDate) {
+            const startDate = new Date(sinceDate);
+            if (isNaN(startDate.getTime())) {
+                return 'Invalid start date format';
+            }
+            if (startDate > today) {
+                return 'Start date cannot be in the future';
+            }
+        }
+
+        if (untilDate) {
+            const endDate = new Date(untilDate);
+            if (isNaN(endDate.getTime())) {
+                return 'Invalid end date format';
+            }
+            if (endDate > today) {
+                return 'End date cannot be in the future';
+            }
+        }
+
+        if (sinceDate && untilDate) {
+            const startDate = new Date(sinceDate);
+            const endDate = new Date(untilDate);
+            if (startDate > endDate) {
+                return 'Start date must be earlier than or equal to end date';
+            }
+        }
+
+        return null;
+    }
+
+    function validateField(field: string) {
+        const newErrors = { ...validationErrors };
+
+        switch (field) {
+            case 'maxCommits':
+                const maxCommitsError = validateMaxCommits(maxCommits);
+                if (maxCommitsError) {
+                    newErrors.maxCommits = maxCommitsError;
+                } else {
+                    delete newErrors.maxCommits;
+                }
+                break;
+            case 'sinceDate':
+            case 'untilDate':
+                const dateError = validateDates();
+                if (dateError) {
+                    newErrors.dates = dateError;
+                } else {
+                    delete newErrors.dates;
+                }
+                break;
+            case 'repoUrl':
+                if (reviewMode === 'url' && !repoUrl.trim()) {
+                    newErrors.repoUrl = 'Please enter a repository URL';
+                } else if (reviewMode === 'url' && !repoUrl.match(/^https?:\/\/.+/)) {
+                    newErrors.repoUrl = 'Please enter a valid URL starting with http:// or https://';
+                } else {
+                    delete newErrors.repoUrl;
+                }
+                break;
+        }
+
+        validationErrors = newErrors;
+    }
+
+    function validateAllFields(): boolean {
+        validationErrors = {};
+
+        // Validate based on review mode
+        if (reviewMode === 'github') {
+            if (!selectedGithubRepo) {
+                validationErrors.repo = 'Please select a repository';
+            }
+        } else if (reviewMode === 'azuredevops') {
+            if (!selectedAzdoRepo) {
+                validationErrors.repo = 'Please select a repository';
+            }
+            if (!azureDevOpsAuth.organization) {
+                validationErrors.org = 'Please set your Azure DevOps organization';
+            }
+        } else if (reviewMode === 'url') {
+            if (!repoUrl.trim()) {
+                validationErrors.repoUrl = 'Please enter a repository URL';
+            } else if (!repoUrl.match(/^https?:\/\/.+/)) {
+                validationErrors.repoUrl = 'Please enter a valid URL starting with http:// or https://';
+            }
+        } else if (reviewMode === 'upload' && !selectedFile) {
+            validationErrors.file = 'Please select a ZIP file to upload';
+        }
+
+        // Validate max commits
+        const maxCommitsError = validateMaxCommits(maxCommits);
+        if (maxCommitsError) {
+            validationErrors.maxCommits = maxCommitsError;
+        }
+
+        // Validate dates
+        const dateError = validateDates();
+        if (dateError) {
+            validationErrors.dates = dateError;
+        }
+
+        return Object.keys(validationErrors).length === 0;
+    }
+
+    function scrollToResults() {
+        // Use setTimeout to ensure the DOM has updated
+        setTimeout(() => {
+            if (resultsSection) {
+                resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }, 100);
+    }
+
     async function handleReview() {
+        // Normalize max commits before validation
+        normalizeMaxCommits();
+
+        // Validate all fields before proceeding
+        if (!validateAllFields()) {
+            const errorMessages = Object.values(validationErrors);
+            toasts.push({
+                message: `Please fix the following issues: ${errorMessages.join('. ')}`,
+                color: 'danger'
+            });
+            return;
+        }
+
         loading = true;
         error = "";
         reviews = [];
@@ -106,15 +305,18 @@
         progress = 0;
         progressTotal = 0;
         progressCurrent = 0;
-        progressStatus = "Connecting...";
+        progressStatus = "Connecting to repository...";
         currentCommit = "";
         myTimer?.start();
+
+        // Auto-scroll to results section
+        scrollToResults();
 
         try {
             if (reviewMode === 'upload') {
                 // Upload zip file (non-streaming)
                 if (!selectedFile) {
-                    toasts.push({ message: "Please select a file", color: 'warning' });
+                    toasts.push({ message: "Please select a ZIP file containing your repository", color: 'warning' });
                     loading = false;
                     return;
                 }
@@ -136,7 +338,8 @@
                 progressStatus = "Uploading and analyzing...";
                 const response = await fetch(`${api_base}/review/upload`, {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    credentials: 'include'
                 });
 
                 progress = 100;
@@ -162,9 +365,20 @@
                     });
                 }
             } else {
-                // URL review with streaming progress
+                // URL or GitHub review with streaming progress
                 const formData = new FormData();
-                formData.append('repo_url', repoUrl);
+
+                // Determine the clone URL based on review mode
+                let urlToUse: string;
+                if (reviewMode === 'github' && selectedGithubRepo) {
+                    urlToUse = selectedGithubRepo.clone_url;
+                } else if (reviewMode === 'azuredevops' && selectedAzdoRepo) {
+                    urlToUse = selectedAzdoRepo.remote_url;
+                } else {
+                    urlToUse = repoUrl;
+                }
+                formData.append('repo_url', urlToUse);
+
                 if (maxCommits) formData.append('max_commits', maxCommits.toString());
                 if (sinceDate) formData.append('since', sinceDate);
                 if (untilDate) formData.append('until', untilDate);
@@ -176,9 +390,11 @@
                 }
 
                 // Use streaming endpoint for real-time progress
+                // Include credentials to send auth cookies for private repo access
                 const response = await fetch(`${api_base}/review/url/stream`, {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    credentials: 'include'
                 });
 
                 if (!response.ok) {
@@ -234,7 +450,21 @@
             }
 
         } catch (err: any) {
-            error = err.message || 'An error occurred';
+            const errorMessage = err.message || 'An error occurred';
+            // Provide user-friendly error messages
+            if (errorMessage.includes('clone') || errorMessage.includes('Clone')) {
+                error = 'Unable to access the repository. Please verify the URL is correct and the repository is public.';
+            } else if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+                error = 'The operation took too long. This may happen with large repositories. Please try again with fewer commits.';
+            } else if (errorMessage.includes('rate limit') || errorMessage.includes('429')) {
+                error = 'Too many requests. Please wait a few minutes before trying again.';
+            } else if (errorMessage.includes('network') || errorMessage.includes('Network')) {
+                error = 'Network error. Please check your internet connection and try again.';
+            } else if (errorMessage.includes('not found') || errorMessage.includes('404')) {
+                error = 'Repository not found. Please verify the URL is correct.';
+            } else {
+                error = `Review failed: ${errorMessage}`;
+            }
             toasts.push({ message: error, color: 'danger' });
         } finally {
             loading = false;
@@ -270,8 +500,11 @@
                 break;
             case 'rate_limit':
                 // Show rate limit warning but continue
-                progressStatus = data.message;
-                toasts.push({ message: 'Rate limit reached. Waiting before retrying...', color: 'warning' });
+                progressStatus = "Rate limit reached - waiting to retry...";
+                toasts.push({
+                    message: 'The AI service is temporarily busy. Automatically waiting and will retry. Please be patient.',
+                    color: 'warning'
+                });
                 break;
             case 'error':
                 // Track failed commits and show toast
@@ -282,8 +515,15 @@
                         failedCommits = [...failedCommits, match[1]];
                     }
                 }
-                if (!data.message.includes('Rate limit')) {
-                    toasts.push({ message: data.message, color: 'danger' });
+                if (!data.message.includes('Rate limit') && !data.message.includes('rate limit')) {
+                    // Provide user-friendly error message
+                    let userMessage = data.message;
+                    if (data.message.includes('clone') || data.message.includes('Clone')) {
+                        userMessage = 'Unable to access the repository. Please verify the URL is correct and the repository is public.';
+                    } else if (data.message.includes('timeout')) {
+                        userMessage = 'The operation took too long. Please try with fewer commits.';
+                    }
+                    toasts.push({ message: userMessage, color: 'danger' });
                 }
                 break;
         }
@@ -292,6 +532,12 @@
     function handleFileSelect(event: Event) {
         const target = event.target as HTMLInputElement;
         selectedFile = target.files?.[0] || null;
+        // Clear file validation error when a file is selected
+        if (selectedFile) {
+            const newErrors = { ...validationErrors };
+            delete newErrors.file;
+            validationErrors = newErrors;
+        }
     }
 
     function handleGuidelinesSelect(event: Event) {
@@ -306,6 +552,9 @@
         selectedGuidelinesFile = null;
         sinceDate = "";
         untilDate = "";
+        validationErrors = {};
+        failedCommits = [];
+        // Don't clear selectedGithubRepo to preserve user's selection
     }
 
     async function handleKeyDown(event: KeyboardEvent) {
@@ -313,6 +562,269 @@
             await handleReview();
         }
     }
+
+    // GitHub Authentication Functions
+    async function checkGitHubAuth() {
+        try {
+            const response = await fetch(`${api_base}/auth/github/status`, {
+                credentials: 'include'
+            });
+            if (response.ok) {
+                const data = await response.json();
+                githubAuth = {
+                    authenticated: data.authenticated,
+                    username: data.username || '',
+                    avatar_url: data.avatar_url || ''
+                };
+                if (githubAuth.authenticated) {
+                    await loadGitHubRepos();
+                }
+            }
+        } catch (err) {
+            console.error('Failed to check GitHub auth status:', err);
+        }
+    }
+
+    function handleGitHubLogin() {
+        // Open GitHub OAuth in a popup window
+        const width = 600;
+        const height = 700;
+        const left = (window.innerWidth - width) / 2;
+        const top = (window.innerHeight - height) / 2;
+
+        const popup = window.open(
+            `${api_base}/auth/github/login`,
+            'github-oauth',
+            `width=${width},height=${height},left=${left},top=${top}`
+        );
+
+        // Poll for popup close and then check auth status
+        const pollTimer = setInterval(async () => {
+            if (popup?.closed) {
+                clearInterval(pollTimer);
+                await checkGitHubAuth();
+                if (githubAuth.authenticated) {
+                    toasts.push({
+                        message: `Signed in as ${githubAuth.username}`,
+                        color: 'success'
+                    });
+                    // Auto-switch to github mode if authenticated
+                    reviewMode = 'github';
+                }
+            }
+        }, 500);
+    }
+
+    async function handleGitHubLogout() {
+        try {
+            const response = await fetch(`${api_base}/auth/github/logout`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+            if (response.ok) {
+                githubAuth = { authenticated: false, username: '', avatar_url: '' };
+                githubRepos = [];
+                selectedGithubRepo = null;
+                if (reviewMode === 'github') {
+                    reviewMode = 'url';
+                }
+                toasts.push({
+                    message: 'Signed out from GitHub',
+                    color: 'info'
+                });
+            }
+        } catch (err) {
+            console.error('Failed to logout:', err);
+            toasts.push({
+                message: 'Failed to sign out',
+                color: 'danger'
+            });
+        }
+    }
+
+    async function loadGitHubRepos() {
+        loadingRepos = true;
+        try {
+            const response = await fetch(`${api_base}/auth/github/repos?per_page=100&sort=updated`, {
+                credentials: 'include'
+            });
+            if (response.ok) {
+                const data = await response.json();
+                githubRepos = data.repos;
+            } else if (response.status === 401) {
+                // Token expired
+                githubAuth = { authenticated: false, username: '', avatar_url: '' };
+                githubRepos = [];
+                toasts.push({
+                    message: 'GitHub session expired. Please sign in again.',
+                    color: 'warning'
+                });
+            }
+        } catch (err) {
+            console.error('Failed to load repos:', err);
+            toasts.push({
+                message: 'Failed to load repositories',
+                color: 'danger'
+            });
+        } finally {
+            loadingRepos = false;
+        }
+    }
+
+    function selectGitHubRepo(repo: any) {
+        selectedGithubRepo = repo;
+        repoUrl = repo.clone_url;
+        branch = repo.default_branch;
+        repoDropdownOpen = false;
+        repoSearchQuery = '';
+    }
+
+    $: filteredRepos = githubRepos.filter(repo =>
+        repo.full_name.toLowerCase().includes(repoSearchQuery.toLowerCase()) ||
+        (repo.description && repo.description.toLowerCase().includes(repoSearchQuery.toLowerCase()))
+    );
+
+    // Azure DevOps Authentication Functions
+    async function checkAzureDevOpsAuth() {
+        try {
+            const response = await fetch(`${api_base}/auth/azuredevops/status`, {
+                credentials: 'include'
+            });
+            if (response.ok) {
+                const data = await response.json();
+                azureDevOpsAuth = {
+                    authenticated: data.authenticated,
+                    display_name: data.display_name || '',
+                    email: data.email || '',
+                    organization: data.organization || ''
+                };
+                if (azureDevOpsAuth.authenticated && azureDevOpsAuth.organization) {
+                    azdoOrgInput = azureDevOpsAuth.organization;
+                    await loadAzdoRepos();
+                }
+            }
+        } catch (err) {
+            console.error('Failed to check Azure DevOps auth status:', err);
+        }
+    }
+
+    function handleAzureDevOpsLogin() {
+        const width = 600;
+        const height = 700;
+        const left = (window.innerWidth - width) / 2;
+        const top = (window.innerHeight - height) / 2;
+
+        const popup = window.open(
+            `${api_base}/auth/azuredevops/login`,
+            'azuredevops-oauth',
+            `width=${width},height=${height},left=${left},top=${top}`
+        );
+
+        const pollTimer = setInterval(async () => {
+            if (popup?.closed) {
+                clearInterval(pollTimer);
+                await checkAzureDevOpsAuth();
+                if (azureDevOpsAuth.authenticated) {
+                    toasts.push({
+                        message: `Signed in to Azure DevOps as ${azureDevOpsAuth.display_name}`,
+                        color: 'success'
+                    });
+                    reviewMode = 'azuredevops';
+                }
+            }
+        }, 500);
+    }
+
+    async function handleAzureDevOpsLogout() {
+        try {
+            const response = await fetch(`${api_base}/auth/azuredevops/logout`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+            if (response.ok) {
+                azureDevOpsAuth = { authenticated: false, display_name: '', email: '', organization: '' };
+                azdoRepos = [];
+                selectedAzdoRepo = null;
+                azdoOrgInput = '';
+                if (reviewMode === 'azuredevops') {
+                    reviewMode = 'url';
+                }
+                toasts.push({ message: 'Signed out from Azure DevOps', color: 'info' });
+            }
+        } catch (err) {
+            console.error('Failed to logout from Azure DevOps:', err);
+        }
+    }
+
+    async function setAzdoOrganization() {
+        if (!azdoOrgInput.trim()) {
+            toasts.push({ message: 'Please enter an organization name', color: 'warning' });
+            return;
+        }
+        settingOrg = true;
+        try {
+            const response = await fetch(`${api_base}/auth/azuredevops/organization`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ organization: azdoOrgInput.trim() })
+            });
+            if (response.ok) {
+                azureDevOpsAuth.organization = azdoOrgInput.trim();
+                toasts.push({ message: `Organization set to "${azdoOrgInput.trim()}"`, color: 'success' });
+                await loadAzdoRepos();
+            } else {
+                const errData = await response.json();
+                toasts.push({ message: errData.detail || 'Failed to set organization', color: 'danger' });
+            }
+        } catch (err) {
+            toasts.push({ message: 'Failed to connect to Azure DevOps', color: 'danger' });
+        } finally {
+            settingOrg = false;
+        }
+    }
+
+    async function loadAzdoRepos() {
+        loadingAzdoRepos = true;
+        try {
+            const response = await fetch(`${api_base}/auth/azuredevops/repos`, {
+                credentials: 'include'
+            });
+            if (response.ok) {
+                const data = await response.json();
+                azdoRepos = data.repos;
+            } else if (response.status === 401) {
+                azureDevOpsAuth = { authenticated: false, display_name: '', email: '', organization: '' };
+                azdoRepos = [];
+                toasts.push({ message: 'Azure DevOps session expired. Please sign in again.', color: 'warning' });
+            } else {
+                const errData = await response.json();
+                toasts.push({ message: errData.detail || 'Failed to load repositories', color: 'danger' });
+            }
+        } catch (err) {
+            console.error('Failed to load Azure DevOps repos:', err);
+        } finally {
+            loadingAzdoRepos = false;
+        }
+    }
+
+    function selectAzdoRepo(repo: any) {
+        selectedAzdoRepo = repo;
+        repoUrl = repo.remote_url;
+        branch = repo.default_branch || 'main';
+        azdoRepoDropdownOpen = false;
+        azdoRepoSearchQuery = '';
+    }
+
+    $: filteredAzdoRepos = azdoRepos.filter(repo =>
+        repo.full_name.toLowerCase().includes(azdoRepoSearchQuery.toLowerCase()) ||
+        repo.name.toLowerCase().includes(azdoRepoSearchQuery.toLowerCase())
+    );
+
+    onMount(() => {
+        checkGitHubAuth();
+        checkAzureDevOpsAuth();
+    });
 </script>
 
 <ToastNotifications position="top-right" maxToasts={5} />
@@ -321,6 +833,54 @@
     <div class="header-section">
         <h2><Icon name="file-code" /> Code Review Assistant</h2>
         <p class="text-muted">Analyze Git commits with AI-powered insights</p>
+
+        <!-- Authentication Status -->
+        <div class="auth-section mt-3 d-flex justify-content-center gap-3 flex-wrap">
+            <!-- GitHub Auth -->
+            <div class="auth-provider-card">
+                {#if githubAuth.authenticated}
+                    <div class="d-flex align-items-center gap-2">
+                        {#if githubAuth.avatar_url}
+                            <img src={githubAuth.avatar_url} alt={githubAuth.username} class="github-avatar" />
+                        {/if}
+                        <span class="text-success">
+                            <Icon name="check-circle-fill" /> <strong>{githubAuth.username}</strong>
+                        </span>
+                        <Button size="sm" color="secondary" outline on:click={handleGitHubLogout}>
+                            Sign Out
+                        </Button>
+                    </div>
+                {:else}
+                    <Button color="dark" on:click={handleGitHubLogin}>
+                        <Icon name="github" /> Sign in with GitHub
+                    </Button>
+                {/if}
+            </div>
+
+            <!-- Azure DevOps Auth -->
+            <div class="auth-provider-card">
+                {#if azureDevOpsAuth.authenticated}
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="text-primary">
+                            <Icon name="check-circle-fill" /> <strong>{azureDevOpsAuth.display_name}</strong>
+                        </span>
+                        {#if azureDevOpsAuth.organization}
+                            <Badge color="info">{azureDevOpsAuth.organization}</Badge>
+                        {/if}
+                        <Button size="sm" color="secondary" outline on:click={handleAzureDevOpsLogout}>
+                            Sign Out
+                        </Button>
+                    </div>
+                {:else}
+                    <Button color="primary" on:click={handleAzureDevOpsLogin}>
+                        <Icon name="cloud" /> Sign in with Azure DevOps
+                    </Button>
+                {/if}
+            </div>
+        </div>
+        <p class="text-muted mt-2 mb-0">
+            <small>Sign in to access your private repositories</small>
+        </p>
     </div>
 
     <!-- Configuration Panel -->
@@ -332,34 +892,210 @@
             <div class="mb-3">
                 <label class="form-label fw-bold">Review Source</label>
                 <div class="btn-group w-100" role="group">
-                    <input 
-                        type="radio" 
-                        class="btn-check" 
-                        bind:group={reviewMode} 
-                        value="url" 
+                    {#if githubAuth.authenticated}
+                        <input
+                            type="radio"
+                            class="btn-check"
+                            bind:group={reviewMode}
+                            value="github"
+                            id="mode-github"
+                            on:change={clearResults}
+                        />
+                        <label class="btn btn-outline-primary" for="mode-github">
+                            <Icon name="github" /> My Repositories
+                        </label>
+                    {/if}
+
+                    <input
+                        type="radio"
+                        class="btn-check"
+                        bind:group={reviewMode}
+                        value="url"
                         id="mode-url"
                         on:change={clearResults}
                     />
                     <label class="btn btn-outline-primary" for="mode-url">
-                        <Icon name="link-45deg" /> Git Repository URL
+                        <Icon name="link-45deg" /> Repository URL
                     </label>
 
-                    <input 
-                        type="radio" 
-                        class="btn-check" 
-                        bind:group={reviewMode} 
-                        value="upload" 
+                    {#if azureDevOpsAuth.authenticated}
+                        <input
+                            type="radio"
+                            class="btn-check"
+                            bind:group={reviewMode}
+                            value="azuredevops"
+                            id="mode-azuredevops"
+                            on:change={clearResults}
+                        />
+                        <label class="btn btn-outline-primary" for="mode-azuredevops">
+                            <Icon name="cloud" /> Azure DevOps
+                        </label>
+                    {/if}
+
+                    <input
+                        type="radio"
+                        class="btn-check"
+                        bind:group={reviewMode}
+                        value="upload"
                         id="mode-upload"
                         on:change={clearResults}
                     />
                     <label class="btn btn-outline-primary" for="mode-upload">
-                        <Icon name="upload" /> Upload ZIP File
+                        <Icon name="upload" /> Upload ZIP
                     </label>
                 </div>
             </div>
 
             <!-- Conditional Inputs Based on Mode -->
-            {#if reviewMode === 'url'}
+            {#if reviewMode === 'github'}
+                <!-- GitHub Repository Selector -->
+                <div class="row mb-3">
+                    <div class="col-md-8">
+                        <label class="form-label">Select Repository</label>
+                        <div class="repo-selector">
+                            {#if loadingRepos}
+                                <div class="d-flex align-items-center gap-2 p-2 border rounded">
+                                    <Spinner size="sm" /> Loading repositories...
+                                </div>
+                            {:else}
+                                <Dropdown isOpen={repoDropdownOpen} toggle={() => repoDropdownOpen = !repoDropdownOpen} class="w-100">
+                                    <DropdownToggle caret class="w-100 text-start d-flex justify-content-between align-items-center">
+                                        {#if selectedGithubRepo}
+                                            <span>
+                                                {#if selectedGithubRepo.private}
+                                                    <Icon name="lock-fill" class="text-warning" />
+                                                {:else}
+                                                    <Icon name="unlock" class="text-muted" />
+                                                {/if}
+                                                {selectedGithubRepo.full_name}
+                                            </span>
+                                        {:else}
+                                            <span class="text-muted">Choose a repository...</span>
+                                        {/if}
+                                    </DropdownToggle>
+                                    <DropdownMenu class="w-100 repo-dropdown-menu">
+                                        <div class="p-2">
+                                            <Input
+                                                placeholder="Search repositories..."
+                                                bind:value={repoSearchQuery}
+                                                size="sm"
+                                            />
+                                        </div>
+                                        <div class="repo-list">
+                                            {#each filteredRepos as repo}
+                                                <DropdownItem on:click={() => selectGitHubRepo(repo)}>
+                                                    <div class="d-flex align-items-center gap-2">
+                                                        {#if repo.private}
+                                                            <Icon name="lock-fill" class="text-warning" />
+                                                        {:else}
+                                                            <Icon name="unlock" class="text-muted" />
+                                                        {/if}
+                                                        <div class="flex-grow-1">
+                                                            <div class="fw-bold">{repo.full_name}</div>
+                                                            {#if repo.description}
+                                                                <small class="text-muted">{repo.description.substring(0, 60)}{repo.description.length > 60 ? '...' : ''}</small>
+                                                            {/if}
+                                                        </div>
+                                                    </div>
+                                                </DropdownItem>
+                                            {:else}
+                                                <DropdownItem disabled>No repositories found</DropdownItem>
+                                            {/each}
+                                        </div>
+                                    </DropdownMenu>
+                                </Dropdown>
+                            {/if}
+                        </div>
+                        <small class="text-muted">Select from your public and private repositories</small>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Branch Name</label>
+                        <Input
+                            placeholder="main"
+                            bind:value={branch}
+                            on:keypress={handleKeyDown}
+                        />
+                        <small class="text-muted">Default: {selectedGithubRepo?.default_branch || 'main'}</small>
+                    </div>
+                </div>
+            {:else if reviewMode === 'azuredevops'}
+                <!-- Azure DevOps Organization + Repository Selector -->
+                <div class="mb-3">
+                    <label class="form-label">Organization Name</label>
+                    <div class="d-flex gap-2">
+                        <Input
+                            placeholder="my-organization"
+                            bind:value={azdoOrgInput}
+                            on:keypress={(e) => { if (e.key === 'Enter') setAzdoOrganization(); }}
+                            class="flex-grow-1"
+                        />
+                        <Button color="primary" on:click={setAzdoOrganization} disabled={settingOrg}>
+                            {#if settingOrg}
+                                <Spinner size="sm" />
+                            {:else}
+                                Load Repos
+                            {/if}
+                        </Button>
+                    </div>
+                    <small class="text-muted">Enter your Azure DevOps organization name (the part after dev.azure.com/)</small>
+                </div>
+
+                {#if azureDevOpsAuth.organization}
+                    <div class="row mb-3">
+                        <div class="col-md-8">
+                            <label class="form-label">Select Repository</label>
+                            <div class="repo-selector">
+                                {#if loadingAzdoRepos}
+                                    <div class="d-flex align-items-center gap-2 p-2 border rounded">
+                                        <Spinner size="sm" /> Loading repositories...
+                                    </div>
+                                {:else}
+                                    <Dropdown isOpen={azdoRepoDropdownOpen} toggle={() => azdoRepoDropdownOpen = !azdoRepoDropdownOpen} class="w-100">
+                                        <DropdownToggle caret class="w-100 text-start d-flex justify-content-between align-items-center">
+                                            {#if selectedAzdoRepo}
+                                                <span>{selectedAzdoRepo.full_name}</span>
+                                            {:else}
+                                                <span class="text-muted">Choose a repository...</span>
+                                            {/if}
+                                        </DropdownToggle>
+                                        <DropdownMenu class="w-100 repo-dropdown-menu">
+                                            <div class="p-2">
+                                                <Input
+                                                    placeholder="Search repositories..."
+                                                    bind:value={azdoRepoSearchQuery}
+                                                    size="sm"
+                                                />
+                                            </div>
+                                            <div class="repo-list">
+                                                {#each filteredAzdoRepos as repo}
+                                                    <DropdownItem on:click={() => selectAzdoRepo(repo)}>
+                                                        <div>
+                                                            <div class="fw-bold">{repo.full_name}</div>
+                                                            <small class="text-muted">Project: {repo.project_name}</small>
+                                                        </div>
+                                                    </DropdownItem>
+                                                {:else}
+                                                    <DropdownItem disabled>No repositories found</DropdownItem>
+                                                {/each}
+                                            </div>
+                                        </DropdownMenu>
+                                    </Dropdown>
+                                {/if}
+                            </div>
+                            <small class="text-muted">Repositories from {azureDevOpsAuth.organization}</small>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Branch Name</label>
+                            <Input
+                                placeholder="main"
+                                bind:value={branch}
+                                on:keypress={handleKeyDown}
+                            />
+                            <small class="text-muted">Default: {selectedAzdoRepo?.default_branch || 'main'}</small>
+                        </div>
+                    </div>
+                {/if}
+            {:else if reviewMode === 'url'}
                 <div class="row mb-3">
                     <div class="col-md-8">
                         <label class="form-label">Repository URL</label>
@@ -367,8 +1103,17 @@
                             placeholder="https://github.com/username/repo.git"
                             bind:value={repoUrl}
                             on:keypress={handleKeyDown}
+                            on:blur={() => validateField('repoUrl')}
+                            on:change={() => validateField('repoUrl')}
+                            class={validationErrors.repoUrl ? 'is-invalid' : ''}
                         />
-                        <small class="text-muted">Enter the Git repository URL (GitHub, GitLab, etc.)</small>
+                        {#if validationErrors.repoUrl}
+                            <div class="invalid-feedback d-block">{validationErrors.repoUrl}</div>
+                        {:else if githubAuth.authenticated || azureDevOpsAuth.authenticated}
+                            <small class="text-muted">Enter any Git repository URL. Your sign-in credentials will be used for private repos.</small>
+                        {:else}
+                            <small class="text-muted">Enter a public Git repository URL. Sign in above to access private repos.</small>
+                        {/if}
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Branch Name</label>
@@ -385,12 +1130,14 @@
                     <label class="form-label">Upload Repository ZIP</label>
                     <input
                         type="file"
-                        class="form-control"
+                        class="form-control {validationErrors.file ? 'is-invalid' : ''}"
                         accept=".zip"
                         bind:this={fileInput}
                         on:change={handleFileSelect}
                     />
-                    {#if selectedFile}
+                    {#if validationErrors.file}
+                        <div class="invalid-feedback d-block">{validationErrors.file}</div>
+                    {:else if selectedFile}
                         <small class="text-success"><Icon name="check-circle" /> Selected: {selectedFile.name}</small>
                     {:else}
                         <small class="text-muted">Upload a .zip file containing your Git repository (must include .git folder)</small>
@@ -404,13 +1151,21 @@
                     <label class="form-label">Maximum Commits to Review</label>
                     <Input
                         type="number"
-                        placeholder="10"
+                        placeholder="1"
                         bind:value={maxCommits}
                         min="1"
                         max="100"
+                        step="1"
                         on:keypress={handleKeyDown}
+                        on:blur={normalizeMaxCommits}
+                        on:change={() => validateField('maxCommits')}
+                        class={validationErrors.maxCommits ? 'is-invalid' : ''}
                     />
-                    <small class="text-muted">Number of most recent commits to analyze. Leave dates empty to get the latest commits.</small>
+                    {#if validationErrors.maxCommits}
+                        <div class="invalid-feedback d-block">{validationErrors.maxCommits}</div>
+                    {:else}
+                        <small class="text-muted">Number of most recent commits to analyze (1-100). Only whole numbers are accepted.</small>
+                    {/if}
                 </div>
             </div>
 
@@ -422,8 +1177,15 @@
                         type="date"
                         bind:value={sinceDate}
                         on:keypress={handleKeyDown}
+                        on:change={() => validateField('sinceDate')}
+                        max={new Date().toISOString().split('T')[0]}
+                        class={validationErrors.dates ? 'is-invalid' : ''}
                     />
-                    <small class="text-muted">Filter commits from this date onwards</small>
+                    {#if validationErrors.dates}
+                        <div class="invalid-feedback d-block">{validationErrors.dates}</div>
+                    {:else}
+                        <small class="text-muted">Leave dates empty to get the latest commits. Filter commits from this date onwards.</small>
+                    {/if}
                 </div>
                 <div class="col-md-6">
                     <label class="form-label">End Date (Optional)</label>
@@ -431,6 +1193,9 @@
                         type="date"
                         bind:value={untilDate}
                         on:keypress={handleKeyDown}
+                        on:change={() => validateField('untilDate')}
+                        max={new Date().toISOString().split('T')[0]}
+                        class={validationErrors.dates && !validationErrors.dates.includes('Start') ? 'is-invalid' : ''}
                     />
                     <small class="text-muted">Filter commits up to this date</small>
                 </div>
@@ -511,6 +1276,7 @@
     </Card>
 
     <!-- Results Section -->
+    <div bind:this={resultsSection}></div>
     {#if loading}
         <Card class="mb-4 progress-card">
             <CardBody>
@@ -1029,5 +1795,99 @@
 
     :global(.progress-animated .progress-bar) {
         transition: width 0.3s ease-in-out;
+    }
+
+    /* Validation error styles */
+    .invalid-feedback {
+        color: #dc3545;
+        font-size: 0.875rem;
+        margin-top: 0.25rem;
+    }
+
+    :global(.is-invalid) {
+        border-color: #dc3545 !important;
+        box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.25) !important;
+    }
+
+    :global(.is-invalid:focus) {
+        border-color: #dc3545 !important;
+        box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.25) !important;
+    }
+
+    /* Enhanced toast notification styles - override for more visibility */
+    :global(.toast) {
+        min-width: 350px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
+    }
+
+    :global(.toast.bg-danger) {
+        background-color: #dc3545 !important;
+        color: white !important;
+    }
+
+    :global(.toast.bg-warning) {
+        background-color: #ffc107 !important;
+        color: #212529 !important;
+    }
+
+    :global(.toast.bg-success) {
+        background-color: #28a745 !important;
+        color: white !important;
+    }
+
+    /* Authentication Styles */
+    .auth-section {
+        padding: 15px;
+        background-color: #f8f9fa;
+        border-radius: 8px;
+    }
+
+    .auth-provider-card {
+        padding: 10px 20px;
+        background: white;
+        border-radius: 8px;
+        border: 1px solid #e0e0e0;
+    }
+
+    .github-avatar {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 2px solid #28a745;
+    }
+
+    /* Repository Selector Styles */
+    .repo-selector :global(.dropdown-toggle) {
+        background-color: white;
+        border: 1px solid #ced4da;
+        color: #495057;
+    }
+
+    .repo-selector :global(.dropdown-toggle:hover) {
+        background-color: #f8f9fa;
+    }
+
+    :global(.repo-dropdown-menu) {
+        max-height: 400px;
+        overflow-y: auto;
+        min-width: 100%;
+    }
+
+    .repo-list {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+
+    .repo-list :global(.dropdown-item) {
+        padding: 10px 15px;
+        border-bottom: 1px solid #f0f0f0;
+    }
+
+    .repo-list :global(.dropdown-item:last-child) {
+        border-bottom: none;
+    }
+
+    .repo-list :global(.dropdown-item:hover) {
+        background-color: #f0f7ff;
     }
 </style>
