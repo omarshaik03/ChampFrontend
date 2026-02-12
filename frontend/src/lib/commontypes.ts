@@ -53,10 +53,10 @@ export const APPS: {[key: string]: {
         alias: "Member Insights",
         route: "/memberinsights"
     },
-    // CodeReview: {
-    //     alias: "Code Review",
-    //     route: "/codereview"
-    // },
+    CodeReview: {
+        alias: "Code Review",
+        route: "/codereview"
+    },
     Admin: {
         alias: "Admin",
         route: "/admin"

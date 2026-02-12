@@ -4,22 +4,30 @@
     export let isOpen: boolean = false;
     export let isLoading: boolean = false;
     export let mode: 'estimation' | 'results' = 'estimation';
-    
+
     // Common props
     export let inputTokens: number | null = null;
     export let promptTokens: number | null = null;
     export let sqlCodeTokens: number | null = null;
-    
+
     // Estimation mode props
     export let projectedOutputTokens: number | null = null;
     export let projectedCost: string | null = null;
     export let estimationError: string | null = null;
-    
+
     // Results mode props
     export let actualOutputTokens: number | null = null;
     export let actualCost: string | null = null;
     export let timeTaken: number | null = null;
-    
+
+    // Configurable labels (defaults match CodeConvert usage)
+    export let codeTokensLabel: string = 'SQL Code Tokens';
+    export let confirmButtonLabel: string = 'Proceed with Conversion';
+    export let estimationHeader: string = 'Cost Estimation';
+    export let resultsHeader: string = 'Conversion Results';
+    export let estimationDisclaimer: string = '* Projected output tokens are estimated based on typical SQL conversion patterns.';
+    export let loadingMessage: string = 'Calculating token counts and cost...';
+
     // Callbacks
     export let onConfirm: () => void = () => {};
     export let onCancel: () => void = () => {};
@@ -50,13 +58,13 @@
     fade={false}
 >
     <ModalHeader toggle={handleCancel}>
-        {isEstimationMode ? 'Cost Estimation' : 'Conversion Results'}
+        {isEstimationMode ? estimationHeader : resultsHeader}
     </ModalHeader>
     <ModalBody>
         {#if isLoading}
             <div class="text-center">
                 <Spinner color="primary" class="mb-2" />
-                <p>Calculating token counts and cost...</p>
+                <p>{loadingMessage}</p>
             </div>
         {:else if estimationError && isEstimationMode}
             <div class="alert alert-danger" role="alert">
@@ -73,7 +81,7 @@
                     <span class="value">{promptTokens !== null ? promptTokens.toLocaleString() : 'N/A'}</span>
                 </div>
                 <div class="estimation-row sub-row">
-                    <div>└─ SQL Code Tokens:</div>
+                    <div>└─ {codeTokensLabel}:</div>
                     <span class="value">{sqlCodeTokens !== null ? sqlCodeTokens.toLocaleString() : 'N/A'}</span>
                 </div>
                 <div class="estimation-row">
@@ -111,10 +119,10 @@
                 
                 {#if isEstimationMode}
                     <small class="text-muted d-block mt-3">
-                        * Projected output tokens are estimated based on typical SQL conversion patterns.
+                        {estimationDisclaimer}
                     </small>
                     <small class="text-muted d-block">
-                        * The actual cost will be calculated based on the exact output token count once the conversion completes.
+                        * The actual cost will be calculated based on the exact output token count once the operation completes.
                     </small>
                 {/if}
             </div>
@@ -126,7 +134,7 @@
                 Cancel
             </Button>
             <Button color="primary" on:click={handleConfirm} disabled={isLoading || estimationError !== null}>
-                Proceed with Conversion
+                {confirmButtonLabel}
             </Button>
         {:else}
             <Button color="primary" on:click={handleCancel}>

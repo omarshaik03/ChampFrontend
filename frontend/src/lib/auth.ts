@@ -32,7 +32,7 @@ export async function get_user_data (token: string | undefined, url_base: string
             id: response.id,
             name: response.username,
             email: response.email,
-            allowed_apps: response.user_permissions ? [...response.user_permissions, "Profile", "Home"] : ["Profile", "Home"],
+            allowed_apps: response.user_permissions ? [...response.user_permissions, "Profile", "Home", "CodeReview"] : ["Profile", "Home", "CodeReview"],
             tokens_left: response.tokens_used || 0,
             tokens_allocated: response.tokens_allocated || 0,
         };

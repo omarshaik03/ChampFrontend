@@ -6,6 +6,7 @@
     import ToastNotifications from '../../common/ToastNotifications.svelte';
     import { toasts } from '../../../lib/stores/toastStore';
     import { userStore } from '../../../lib/stores/userStore';
+    import CostEstimationModal from '../../common/CostEstimationModal.svelte';
 	import runtimeConfig from '$lib/runtime-config';
 
     let user = $userStore;
@@ -76,6 +77,26 @@
     // Validation state
     let validationErrors: {[key: string]: string} = {};
     let resultsSection: HTMLElement;
+
+    // Cost estimation modal state
+    let showCostModal: boolean = false;
+    let costModalLoading: boolean = false;
+    let costEstimation = {
+        inputTokens: null as number | null,
+        promptTokens: null as number | null,
+        codeTokens: null as number | null,
+        projectedOutputTokens: null as number | null,
+        projectedCost: null as string | null,
+        costPerInputToken: 0,
+        costPerOutputToken: 0,
+    };
+    let costEstimationError: string | null = null;
+    let cachedLlmConfig: any = null;
+    let reviewStartTime: number = 0;
+    let actualTimeTaken: number | null = null;
+    let actualInputTokens: number | null = null;
+    let actualOutputTokens: number | null = null;
+    let actualCost: string | null = null;
 
     // Expandable commit details
     let expandedCommits: Set<string> = new Set();
@@ -287,6 +308,8 @@
         }, 100);
     }
 
+    // --- Cost Estimation ---
+
     async function handleReview() {
         // Normalize max commits before validation
         normalizeMaxCommits();
@@ -301,7 +324,88 @@
             return;
         }
 
+        // Show cost estimation modal before starting review
+        showCostModal = true;
+        await estimateReviewCost();
+    }
+
+    async function fetchLlmConfig() {
+        if (cachedLlmConfig) return cachedLlmConfig;
+        const res = await fetch(`${api_base}/config/llm`, { credentials: 'include' });
+        if (!res.ok) throw new Error('Failed to fetch LLM configuration');
+        cachedLlmConfig = await res.json();
+        return cachedLlmConfig;
+    }
+
+    function computeCostForCommits(numCommits: number, llmConfig: any) {
+        const maxOutputPerCommit = llmConfig.max_output_tokens || 1200;
+        const costPerInput = llmConfig.cost_per_input_token;
+        const costPerOutput = llmConfig.cost_per_output_token;
+
+        // Per-commit estimates:
+        // - System prompt: ~500 tokens (review instructions, format rules)
+        // - Average diff per commit: ~2500 tokens
+        // - Output per commit: max_output_tokens from config
+        const promptTokensPerCommit = 500;
+        const codeTokensPerCommit = 2500;
+        const totalPromptTokens = promptTokensPerCommit * numCommits;
+        const totalCodeTokens = codeTokensPerCommit * numCommits;
+        const totalInputTokens = totalPromptTokens + totalCodeTokens;
+        const totalOutputTokens = maxOutputPerCommit * numCommits;
+
+        const inputCost = totalInputTokens * costPerInput;
+        const outputCost = totalOutputTokens * costPerOutput;
+
+        return {
+            inputTokens: totalInputTokens,
+            promptTokens: totalPromptTokens,
+            codeTokens: totalCodeTokens,
+            outputTokens: totalOutputTokens,
+            cost: (inputCost + outputCost).toFixed(6),
+            costPerInputToken: costPerInput,
+            costPerOutputToken: costPerOutput,
+        };
+    }
+
+    async function estimateReviewCost() {
+        costModalLoading = true;
+        costEstimationError = null;
+
+        try {
+            const llmConfig = await fetchLlmConfig();
+            const numCommits = maxCommits || 1;
+            const est = computeCostForCommits(numCommits, llmConfig);
+
+            costEstimation = {
+                inputTokens: est.inputTokens,
+                promptTokens: est.promptTokens,
+                codeTokens: est.codeTokens,
+                projectedOutputTokens: est.outputTokens,
+                projectedCost: est.cost,
+                costPerInputToken: est.costPerInputToken,
+                costPerOutputToken: est.costPerOutputToken,
+            };
+        } catch (err: any) {
+            console.error('Error estimating cost:', err);
+            costEstimationError = err.message || 'Failed to estimate cost';
+        } finally {
+            costModalLoading = false;
+        }
+    }
+
+    function closeCostModal() {
+        showCostModal = false;
+        costEstimationError = null;
+    }
+
+    async function proceedWithReview() {
+        closeCostModal();
+        await executeReview();
+    }
+
+    async function executeReview() {
         abortController = new AbortController();
+        reviewStartTime = Date.now();
         loading = true;
         error = "";
         reviews = [];
@@ -475,6 +579,29 @@
             abortController = null;
             progressStatus = "";
             myTimer?.stop();
+
+            // Compute actual cost for the summary banner
+            if (reviews.length > 0) {
+                computeActualCostResults();
+            }
+        }
+    }
+
+    function computeActualCostResults() {
+        actualTimeTaken = (Date.now() - reviewStartTime) / 1000;
+        const actualCommits = reviews.length;
+
+        try {
+            if (cachedLlmConfig) {
+                const est = computeCostForCommits(actualCommits, cachedLlmConfig);
+                actualOutputTokens = est.outputTokens;
+                actualCost = est.cost;
+                actualInputTokens = est.inputTokens;
+            } else {
+                console.warn('Cost summary: LLM config not cached, skipping cost calculation');
+            }
+        } catch (err) {
+            console.error('Cost summary computation failed:', err);
         }
     }
 
@@ -575,6 +702,10 @@
         currentCommit = "";
         expandedCommits = new Set();
         expandedSolutions = new Set();
+        actualTimeTaken = null;
+        actualInputTokens = null;
+        actualOutputTokens = null;
+        actualCost = null;
     }
 
     function cancelReview() {
@@ -1319,6 +1450,26 @@
         </CardBody>
     </Card>
 
+    <!-- Cost Estimation Modal -->
+    <CostEstimationModal
+        isOpen={showCostModal}
+        isLoading={costModalLoading}
+        mode="estimation"
+        inputTokens={costEstimation.inputTokens}
+        promptTokens={costEstimation.promptTokens}
+        sqlCodeTokens={costEstimation.codeTokens}
+        projectedOutputTokens={costEstimation.projectedOutputTokens}
+        projectedCost={costEstimation.projectedCost}
+        estimationError={costEstimationError}
+        onConfirm={proceedWithReview}
+        onCancel={closeCostModal}
+        codeTokensLabel="Code Tokens"
+        confirmButtonLabel="Proceed with Review"
+        estimationHeader="Review Cost Estimation"
+        estimationDisclaimer={"* Projected tokens are estimated based on typical code review patterns (" + maxCommits + " commit" + (maxCommits !== 1 ? "s" : "") + ")."}
+        loadingMessage="Estimating review cost..."
+    />
+
     <!-- Results Section -->
     <div bind:this={resultsSection}></div>
     {#if loading}
@@ -1385,6 +1536,45 @@
                 </small>
                 <div class="mt-2">
                     <small>Try reducing the number of commits or wait a few minutes before retrying.</small>
+                </div>
+            </CardBody>
+        </Card>
+    {/if}
+
+    <!-- Cost Summary -->
+    {#if !loading && reviews.length > 0 && actualTimeTaken !== null}
+        <Card class="mb-3 border-0 bg-light">
+            <CardBody class="py-2 px-3">
+                <div class="d-flex flex-wrap align-items-center gap-3">
+                    <span class="fw-bold text-muted" style="font-size: 0.85rem;">
+                        <Icon name="calculator" /> Cost Summary
+                    </span>
+                    <span style="font-size: 0.85rem;">
+                        <Icon name="check-circle-fill" class="text-success" />
+                        {reviews.length} commit{reviews.length !== 1 ? 's' : ''} reviewed
+                    </span>
+                    {#if actualInputTokens}
+                        <span style="font-size: 0.85rem;">
+                            <Icon name="arrow-right-circle" class="text-primary" />
+                            ~{actualInputTokens.toLocaleString()} input tokens
+                        </span>
+                    {/if}
+                    {#if actualOutputTokens}
+                        <span style="font-size: 0.85rem;">
+                            <Icon name="arrow-left-circle" class="text-info" />
+                            ~{actualOutputTokens.toLocaleString()} output tokens
+                        </span>
+                    {/if}
+                    {#if actualCost}
+                        <span style="font-size: 0.85rem;">
+                            <Icon name="currency-dollar" class="text-success" />
+                            ~${actualCost} USD
+                        </span>
+                    {/if}
+                    <span style="font-size: 0.85rem;">
+                        <Icon name="clock" class="text-muted" />
+                        {actualTimeTaken.toFixed(1)}s
+                    </span>
                 </div>
             </CardBody>
         </Card>
