@@ -103,6 +103,48 @@
 
     // Expandable solutions
     let expandedSolutions: Set<string> = new Set();
+    type FindingChatRole = 'user' | 'assistant';
+    type FindingChatMessage = { role: FindingChatRole; content: string };
+    type FindingChatContext = {
+        finding_scope: 'code' | 'security';
+        commit_hash: string;
+        commit_message: string;
+        review_summary: string;
+        severity: string;
+        file_path: string;
+        line_number?: number;
+        message: string;
+        recommendation?: string;
+        title?: string;
+        cve_id?: string;
+        original_code?: string;
+        solution?: string;
+    };
+    type FindingChatState = {
+        input: string;
+        loading: boolean;
+        error: string;
+        messages: FindingChatMessage[];
+    };
+    let findingChats: Record<string, FindingChatState> = {};
+    let findingContexts: Record<string, FindingChatContext> = {};
+    let activeFindingId: string | null = null;
+    let isChatDrawerOpen = false;
+    let drawerChatInput = '';
+    let activeChatState: FindingChatState = {
+        input: '',
+        loading: false,
+        error: '',
+        messages: [],
+    };
+    let activeChatContext: FindingChatContext | null = null;
+
+    const emptyFindingChatState = (): FindingChatState => ({
+        input: '',
+        loading: false,
+        error: '',
+        messages: [],
+    });
 
     function toggleCommit(commitHash: string) {
         if (expandedCommits.has(commitHash)) {
@@ -121,6 +163,169 @@
         }
         expandedSolutions = expandedSolutions;
     }
+
+    function getFindingChatState(findingId: string): FindingChatState {
+        return findingChats[findingId] || emptyFindingChatState();
+    }
+
+    function ensureFindingChatState(findingId: string): FindingChatState {
+        const existing = findingChats[findingId];
+        if (existing) return existing;
+        const state = emptyFindingChatState();
+        findingChats = { ...findingChats, [findingId]: state };
+        return state;
+    }
+
+    function updateFindingChatInput(findingId: string, input: string) {
+        const currentState = ensureFindingChatState(findingId);
+        findingChats = {
+            ...findingChats,
+            [findingId]: {
+                ...currentState,
+                input,
+            }
+        };
+    }
+
+    function buildCodeFindingContext(review: any, finding: any): FindingChatContext {
+        return {
+            finding_scope: 'code',
+            commit_hash: review.commit_hash,
+            commit_message: review.commit_message,
+            review_summary: review.summary || '',
+            severity: finding.severity || 'info',
+            file_path: finding.file || 'unknown',
+            message: finding.message || '',
+            original_code: finding.original_code || undefined,
+            solution: finding.solution || undefined,
+        };
+    }
+
+    function buildSecurityFindingContext(review: any, secFinding: any): FindingChatContext {
+        return {
+            finding_scope: 'security',
+            commit_hash: review.commit_hash,
+            commit_message: review.commit_message,
+            review_summary: review.summary || '',
+            severity: secFinding.severity || 'medium',
+            file_path: secFinding.file_path || 'unknown',
+            line_number: secFinding.line_number || undefined,
+            message: secFinding.description || '',
+            recommendation: secFinding.recommendation || undefined,
+            title: secFinding.title || undefined,
+            cve_id: secFinding.cve_id || undefined,
+            original_code: secFinding.original_code || undefined,
+            solution: secFinding.solution || undefined,
+        };
+    }
+
+    function openFindingChat(findingId: string, context: FindingChatContext) {
+        const currentState = ensureFindingChatState(findingId);
+        findingContexts = { ...findingContexts, [findingId]: context };
+        findingChats = { ...findingChats, [findingId]: { ...currentState, error: '' } };
+        activeFindingId = findingId;
+        drawerChatInput = currentState.input || '';
+        isChatDrawerOpen = true;
+    }
+
+    function closeFindingChatDrawer() {
+        isChatDrawerOpen = false;
+    }
+
+    async function sendFindingChat(findingId: string, context: FindingChatContext, rawQuestion?: string): Promise<boolean> {
+        const currentState = ensureFindingChatState(findingId);
+        const question = (rawQuestion ?? currentState.input).trim();
+        if (!question || currentState.loading) return false;
+
+        const previousMessages = [...currentState.messages];
+        const nextMessages = [...previousMessages, { role: 'user' as const, content: question }];
+
+        findingChats = {
+            ...findingChats,
+            [findingId]: {
+                ...currentState,
+                loading: true,
+                error: '',
+                input: '',
+                messages: nextMessages,
+            }
+        };
+
+        try {
+            const response = await fetch(`${api_base}/review/finding-chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    question,
+                    context,
+                    conversation: previousMessages,
+                }),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.detail || 'Failed to get finding chat response');
+            }
+
+            const data = await response.json();
+            const refreshedState = ensureFindingChatState(findingId);
+            findingChats = {
+                ...findingChats,
+                [findingId]: {
+                    ...refreshedState,
+                    loading: false,
+                    messages: [
+                        ...refreshedState.messages,
+                        { role: 'assistant', content: data.answer || 'No answer returned.' }
+                    ],
+                }
+            };
+            return true;
+        } catch (err: any) {
+            const refreshedState = ensureFindingChatState(findingId);
+            findingChats = {
+                ...findingChats,
+                [findingId]: {
+                    ...refreshedState,
+                    loading: false,
+                    error: err.message || 'Unable to complete request.',
+                }
+            };
+            toasts.push({
+                message: err.message || 'Failed to send finding chat message.',
+                color: 'danger'
+            });
+            return false;
+        }
+    }
+
+    async function sendActiveFindingChat() {
+        if (!activeFindingId) return;
+        const context = findingContexts[activeFindingId];
+        if (!context) return;
+
+        const drawerTextarea = document.querySelector('.finding-chat-drawer.open textarea') as HTMLTextAreaElement | null;
+        const rawInput = drawerTextarea?.value ?? drawerChatInput;
+        const question = (rawInput || '').trim();
+        if (!question) {
+            toasts.push({ message: 'Please enter a message before sending.', color: 'warning' });
+            return;
+        }
+
+        const sent = await sendFindingChat(activeFindingId, context, question);
+        if (sent) {
+            drawerChatInput = '';
+            if (drawerTextarea) drawerTextarea.value = '';
+        }
+    }
+
+    $: activeChatState = activeFindingId
+        ? (findingChats[activeFindingId] || emptyFindingChatState())
+        : emptyFindingChatState();
+    $: activeChatContext = activeFindingId
+        ? (findingContexts[activeFindingId] || null)
+        : null;
 
     function getSeverityColor(severity: string): string {
         switch(severity) {
@@ -702,6 +907,11 @@
         currentCommit = "";
         expandedCommits = new Set();
         expandedSolutions = new Set();
+        findingChats = {};
+        findingContexts = {};
+        activeFindingId = null;
+        isChatDrawerOpen = false;
+        drawerChatInput = '';
         actualTimeTaken = null;
         actualInputTokens = null;
         actualOutputTokens = null;
@@ -1663,6 +1873,17 @@
                                                                 </div>
                                                             </Collapse>
                                                         {/if}
+                                                        <div class="mt-2">
+                                                            <Button
+                                                                size="sm"
+                                                                color="primary"
+                                                                outline
+                                                                on:click={() => openFindingChat(findingId, buildCodeFindingContext(review, finding))}
+                                                            >
+                                                                <Icon name={activeFindingId === findingId && isChatDrawerOpen ? "chat-square-text-fill" : "chat-square-text"} />
+                                                                Ask Chat
+                                                            </Button>
+                                                        </div>
                                                     </td>
                                                 </tr>
                                             {/each}
@@ -1769,6 +1990,17 @@
                                                                         </div>
                                                                     </Collapse>
                                                                 {/if}
+                                                                <div class="mt-2">
+                                                                    <Button
+                                                                        size="sm"
+                                                                        color="primary"
+                                                                        outline
+                                                                        on:click={() => openFindingChat(secFindingId, buildSecurityFindingContext(review, secFinding))}
+                                                                    >
+                                                                        <Icon name={activeFindingId === secFindingId && isChatDrawerOpen ? "chat-square-text-fill" : "chat-square-text"} />
+                                                                        Ask Chat
+                                                                    </Button>
+                                                                </div>
                                                             </td>
                                                         </tr>
                                                     {/each}
@@ -1786,6 +2018,85 @@
             {/each}
         </div>
     {/if}
+
+    <div
+        class={`chat-drawer-backdrop ${isChatDrawerOpen ? 'show' : ''}`}
+        role="button"
+        tabindex="0"
+        aria-label="Close finding chat"
+        on:click={closeFindingChatDrawer}
+        on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') closeFindingChatDrawer(); }}
+    ></div>
+    <aside class={`finding-chat-drawer ${isChatDrawerOpen ? 'open' : ''}`}>
+        {#if activeFindingId}
+            <div class="drawer-header">
+                <div>
+                    <h6 class="mb-1"><Icon name="chat-square-text" /> Finding Chat</h6>
+                    {#if activeChatContext}
+                        <small class="text-muted d-block">{activeChatContext.severity.toUpperCase()} • {activeChatContext.file_path}</small>
+                        <small class="text-muted d-block"><code>{activeChatContext.commit_hash}</code></small>
+                    {/if}
+                </div>
+                <Button size="sm" color="secondary" outline on:click={closeFindingChatDrawer}>
+                    <Icon name="x-lg" />
+                </Button>
+            </div>
+
+            {#if activeChatContext}
+                <div class="drawer-context">
+                    {activeChatContext.message}
+                </div>
+            {/if}
+
+            <div class="drawer-chat-history">
+                {#if activeChatState.messages.length === 0}
+                    <div class="text-muted small">Start by asking about risk, severity, exploitability, and remediation.</div>
+                {:else}
+                    {#each activeChatState.messages as chatMessage}
+                        <div class={`finding-chat-message ${chatMessage.role}`}>
+                            {chatMessage.content}
+                        </div>
+                    {/each}
+                {/if}
+            </div>
+
+            {#if activeChatState.error}
+                <div class="text-danger mt-2">
+                    <small>{activeChatState.error}</small>
+                </div>
+            {/if}
+
+            <div class="drawer-input">
+                <textarea
+                    class="form-control drawer-textarea"
+                    rows="3"
+                    placeholder="Ask a question about this specific finding..."
+                    bind:value={drawerChatInput}
+                    on:input={() => {
+                        if (activeFindingId) updateFindingChatInput(activeFindingId, drawerChatInput);
+                    }}
+                    on:keydown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            sendActiveFindingChat();
+                        }
+                    }}
+                ></textarea>
+                <button
+                    type="button"
+                    class="btn btn-primary mt-2 w-100 drawer-send-btn"
+                    on:click={sendActiveFindingChat}
+                    disabled={activeChatState.loading || !drawerChatInput.trim()}
+                >
+                    {#if activeChatState.loading}
+                        <Spinner size="sm" /> Asking...
+                    {:else}
+                        <Icon name="send" /> Send
+                    {/if}
+                </button>
+            </div>
+        {/if}
+    </aside>
 
 </div>
 
@@ -2001,6 +2312,109 @@
         border-top: none;
         border-radius: 0 0 4px 4px;
         background-color: #1e3a1e;
+    }
+
+    .chat-drawer-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.25);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease;
+        z-index: 1040;
+    }
+
+    .chat-drawer-backdrop.show {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    .finding-chat-drawer {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: min(460px, 96vw);
+        height: 100vh;
+        background: #ffffff;
+        border-left: 1px solid #dbe5f0;
+        box-shadow: -8px 0 24px rgba(15, 23, 42, 0.15);
+        transform: translateX(100%);
+        transition: transform 0.24s ease;
+        z-index: 1050;
+        display: flex;
+        flex-direction: column;
+        padding: 14px;
+    }
+
+    .finding-chat-drawer.open {
+        transform: translateX(0);
+    }
+
+    .drawer-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #edf2f7;
+    }
+
+    .drawer-context {
+        font-size: 0.88rem;
+        color: #475569;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 10px;
+        max-height: 120px;
+        overflow-y: auto;
+    }
+
+    .drawer-chat-history {
+        flex: 1;
+        overflow-y: auto;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 10px;
+        background: #fbfdff;
+    }
+
+    .finding-chat-message {
+        font-size: 0.85rem;
+        line-height: 1.4;
+        white-space: pre-wrap;
+        word-break: break-word;
+        padding: 6px 8px;
+        border-radius: 6px;
+        margin-bottom: 6px;
+    }
+
+    .finding-chat-message.user {
+        background: #e8f0ff;
+        border: 1px solid #c6dbff;
+    }
+
+    .finding-chat-message.assistant {
+        background: #f1f5f9;
+        border: 1px solid #d9e1ea;
+    }
+
+    .drawer-input {
+        margin-top: 10px;
+        position: relative;
+        z-index: 2;
+    }
+
+    .drawer-textarea {
+        resize: vertical;
+        min-height: 88px;
+    }
+
+    .drawer-send-btn {
+        position: relative;
+        z-index: 2;
     }
 
     .progress-card {
