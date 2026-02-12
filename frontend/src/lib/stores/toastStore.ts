@@ -9,8 +9,8 @@ export interface ToastNotification {
     header?: string;
 }
 
-// Default timeout in milliseconds (10 seconds for better visibility)
-const DEFAULT_TIMEOUT = 10000;
+// Default timeout in milliseconds
+const DEFAULT_TIMEOUT = 3000;
 
 // Create a writable store to hold active toast notifications
 const toastStore = writable<ToastNotification[]>([]);
@@ -22,8 +22,13 @@ export const toasts = {
     // Add a new toast notification
     push: (toast: Omit<ToastNotification, 'id'> & { id?: string }) => {
         const id = toast.id || Math.random().toString(36).substr(2, 9);
-        const timeout = toast.timeout || DEFAULT_TIMEOUT;
         const color = toast.color || 'primary';
+        
+        // Determine timeout: provided > danger (10s) > default (3s)
+        let timeout = toast.timeout;
+        if (!timeout) {
+            timeout = color === 'danger' ? 10000 : DEFAULT_TIMEOUT;
+        }
         
         // Add the toast to the store
         toastStore.update(all => [...all, { ...toast, id, timeout, color }]);

@@ -12,11 +12,57 @@
     import type { LlmConfig } from "$lib/stores/llmConfigStore";
     import LlmConfigSelector from "$lib/components/llm-config/LlmConfigSelector.svelte";
     import runtimeConfig from "$lib/runtime-config";
+    import { onMount } from "svelte";
+
+    const codeInsightsLogo = 'clipboard-data';
 
     let llm: Llm = 'GPT4o';
     let sql_language: string = 'MS SQL Server';    // data management
     let user = $userStore as User | null;
     let url_base: string = runtimeConfig.CODE_INSIGHTS_URL;
+
+    // Resizable left panel
+    let leftPanelWidth = 400;
+    const minPanelWidth = 240;
+    const maxPanelWidth = 520;
+    let isResizing = false;
+
+    function startResize(event: MouseEvent): void {
+        event.preventDefault();
+        isResizing = true;
+        window.addEventListener('mousemove', handleResize);
+        window.addEventListener('mouseup', stopResize);
+    }
+
+    function handleResize(event: MouseEvent): void {
+        if (!isResizing) return;
+        const nextWidth = Math.min(maxPanelWidth, Math.max(minPanelWidth, event.clientX));
+        leftPanelWidth = nextWidth;
+    }
+
+    function stopResize(): void {
+        isResizing = false;
+        window.removeEventListener('mousemove', handleResize);
+        window.removeEventListener('mouseup', stopResize);
+    }
+
+    onMount(() => {
+        document.body.classList.add('code-insights-page');
+        const updateNavbarHeight = () => {
+            const navbar = document.querySelector('.navbar') as HTMLElement | null;
+            const height = navbar?.offsetHeight ?? 0;
+            document.documentElement.style.setProperty('--ci-navbar-height', `${height}px`);
+        };
+
+        updateNavbarHeight();
+        window.addEventListener('resize', updateNavbarHeight);
+
+        return () => {
+            window.removeEventListener('resize', updateNavbarHeight);
+            document.documentElement.style.removeProperty('--ci-navbar-height');
+            document.body.classList.remove('code-insights-page');
+        };
+    });
 
     // Access key for new CodeInsights microservice (required as form field)
     let accessKey: string = '';
@@ -469,141 +515,149 @@
             </div>
         </Toastwrapper>
     {/if}
-<Container fluid>
-    <Row>
-        <Col xs="3" class="border-end">
-            <br>
-            <Row>
-                <FormGroup>
-                    <div class="mb-3">
-                        <span class="fw-bold">Upload a zip file:</span>
-                        <div class="input-group">
-                            <input class="form-control" type="file" bind:files={zipFileInput}/>
-                        </div>
-                    </div>
-                    <div class="mb-3">
-                        <span class="fw-bold">Upload a report file:</span>
-                        <div class="input-group">
-                            <input class="form-control" type="file" bind:files={reportFileInput}/>
-                        </div>
-                    </div>
-                    
-                    <h6 class="mb-2 fw-bold">LLM Configuration</h6>
-                    <LlmConfigSelector />
-                    
-                    <div class="mt-3 mb-3">
-                        <span class="fw-bold">Access Key:</span>
-                        <div class="input-group">
-                            <input class="form-control" type="text" bind:value={accessKey} placeholder="Enter access key" />
-                        </div>
-                    </div>
-
-                    <div class="d-flex align-items-center justify-content-between mb-3">
-                        <label for="sql_language" class="fw-bold me-2 mb-0">SQL Language:</label>
-                        <Dropdown direction="down">
-                            <DropdownToggle caret style="background-color:white; color: black;">
-                                {sql_language}
-                            </DropdownToggle>
-                            <DropdownMenu>
-                                <DropdownItem on:click={() => sql_language = 'MS SQL Server'}>MS SQL Server</DropdownItem>
-                                <DropdownItem on:click={() => sql_language = 'Oracle'}>Oracle</DropdownItem>
-                                <DropdownItem on:click={() => sql_language = 'PostgreSQL'}>PostgreSQL</DropdownItem>
-                            </DropdownMenu>
-                        </Dropdown>
-                    </div>
-
-                    <div class="d-flex align-items-center gap-2 mb-2">
-                        <button class="btn btn-secondary flex-grow-1" on:click={triggerProcessing}>Process Files</button>
-                        {#if processing}
-                            <button class="btn btn-danger" on:click={cancel}>Cancel</button>
-                        {/if}
-                    </div>
-                    <div class="form-check">
-                        <input class="form-check-input" id="watch_process" type="checkbox" bind:checked={watch_process} />
-                        <label class="form-check-label" for="watch_process">Watch Process</label>
-                    </div>
-                </FormGroup>
-                {#if input_tokens || output_tokens || price || time_taken}
-                    <div class="mt-3">
-                        {#if input_tokens}
-                            <div>Input Tokens: {input_tokens}</div>
-                        {/if}
-                        {#if output_tokens}
-                            <div>Output Tokens: {output_tokens}</div>
-                        {/if}
-                        {#if price}
-                            <div>Estimated Price: {price} USD</div>
-                        {/if}
-                        {#if time_taken}
-                            <div>Time taken: {time_taken} seconds</div>
-                        {/if}
-                    </div>
-                    <hr>
-                {/if}
-            </Row>
-            {#if zipContent || reportContent}
-                <hr>
-                <Row>
-                    <div>
-                        <div class="col">
-                            <span>Approve/View a File:</span>
-                        </div>
-                        <div class="file-select-container">
-                            {#if reportContent}
-                                <div class='file-select px-2' title="Report">
-                                    <button type="button" class="btn btn-link p-0" on:click={() => selectedFileName = 'Report'} aria-label="Select file">
-                                        Report
-                                    </button>
-                                </div>
-                            {/if}
-                            {#if zipContent}
-                                {#each Object.keys(zipContent) as fileName}
-                                    <div class='file-select px-2 d-inline-flex {selectedFileName === fileName ? "active" : ""}' title="{fileName}">
-                                        <input type="checkbox" bind:checked={zipContent[fileName].selected} />
-                                        <button type="button" class="btn btn-link p-0 ms-1" style="overflow: hidden;" on:click={() => selectedFileName = fileName} aria-label="Select file">
-                                            {`${fileName.substring(0, 35)}...`}
-                                        </button>
-                                        {#if zipContent[fileName].status == "incomplete"}
-                                            <span style="color: red;"><Icon name="x-lg"/></span>
-                                        {:else if zipContent[fileName].status == "processing"}
-                                            <div class="ms-1 spinner-border spinner-border-sm text-primary">
-                                                <span class="visually-hidden">Loading...</span>
-                                            </div>
-                                        {:else if zipContent[fileName].status == "complete"}
-                                            <span style="color: green;"><Icon name="check-lg"/></span>
-                                        {/if}
-                                    </div>
-                                {/each}
-                            {/if}
-                        </div>
-                    </div>
-                </Row>
-                <hr>
-                <Row>
+<Container fluid class="insights-container">
+    <div class="insights-layout" class:resizing={isResizing}>
+        <div class="panel-group">
+            <div class="insights-panel" style={`width: ${leftPanelWidth}px;`}>
+                <div class="insights-panel-content">
                     <FormGroup>
-                        <Button 
-                            on:click={download} 
-                            disabled={!Object.values(zipContent || {}).some(f => f.status === 'complete')}
-                        >
-                            Approve and Download
-                        </Button>
+                        <div class="mb-3">
+                            <span>Upload a zip file:</span>
+                            <span class="text-danger">*</span>
+                            <div class="input-group">
+                                <input class="form-control" type="file" bind:files={zipFileInput}/>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <span>Upload a report file:</span><span class="text-danger"> *</span>
+                            <div class="input-group">
+                                <input class="form-control" type="file" bind:files={reportFileInput}/>
+                            </div>
+                        </div>
+                        
+                        <h6 class="mb-2">LLM Configuration</h6>
+                        <LlmConfigSelector />
+                        
+                        <div class="mt-3 mb-3">
+                            <span>Access Key:</span>
+                            <div class="input-group">
+                                <input class="form-control" type="password" bind:value={accessKey} placeholder="Enter access key" />
+                            </div>
+                        </div>
+
+                        <div class="d-flex align-items-center justify-content-between mb-3">
+                            <label for="sql_language" class="me-2 mb-0">SQL Language:</label>
+                            <Dropdown direction="down">
+                                <DropdownToggle caret class="btn btn-styled btn-styled-primary">
+                                    {sql_language}
+                                </DropdownToggle>
+                                <DropdownMenu>
+                                    <DropdownItem on:click={() => sql_language = 'MS SQL Server'}>MS SQL Server</DropdownItem>
+                                    <DropdownItem on:click={() => sql_language = 'Oracle'}>Oracle</DropdownItem>
+                                    <DropdownItem on:click={() => sql_language = 'PostgreSQL'}>PostgreSQL</DropdownItem>
+                                </DropdownMenu>
+                            </Dropdown>
+                        </div>
+
+                        <div class="d-flex align-items-center gap-2 mb-2">
+                            <button class="btn btn-styled btn-styled-primary flex-grow-1 py-2" on:click={triggerProcessing}>Process Files</button>
+                            {#if processing}
+                                <button class="btn btn-styled btn-styled-danger py-2" on:click={cancel}>Cancel</button>
+                            {/if}
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" id="watch_process" type="checkbox" bind:checked={watch_process} />
+                            <label class="form-check-label" for="watch_process">Watch Process</label>
+                        </div>
                     </FormGroup>
-                </Row>
-            {/if}
-            <hr>
-            <Row>
-                <span>Legend:</span>
-                <span><span style="color:{removedColor};"><Icon name="square-fill"/></span> - Removed</span>
-                <span><span style="color:{addedColor};"><Icon name="square-fill"/></span> - Added</span>
-                <span><span style="color:{replacedColor};"><Icon name="square-fill"/></span> - Replaced</span>
-                <span><span style="color:{emptyColor};"><Icon name="square-fill"/></span> - Empty</span>
-                <span><span style="color:{backgroundColor};"><Icon name="square-fill"/></span> - Background</span>
-            </Row>
-        </Col>
-        <Col xs="9">
+                    {#if input_tokens || output_tokens || price || time_taken}
+                        <div class="mt-3">
+                            {#if input_tokens}
+                                <div>Input Tokens: {input_tokens}</div>
+                            {/if}
+                            {#if output_tokens}
+                                <div>Output Tokens: {output_tokens}</div>
+                            {/if}
+                            {#if price}
+                                <div>Estimated Price: {price} USD</div>
+                            {/if}
+                            {#if time_taken}
+                                <div>Time taken: {time_taken} seconds</div>
+                            {/if}
+                        </div>
+                        <hr>
+                    {/if}
+                    
+                    {#if zipContent || reportContent}
+                        <hr>
+                        <div>
+                            <div class="col">
+                                <span>Approve/View a File:</span>
+                            </div>
+                            <div class="file-select-container">
+                                {#if reportContent}
+                                    <div class='file-select px-2' title="Report">
+                                        <button type="button" class="btn btn-link p-0" on:click={() => selectedFileName = 'Report'} aria-label="Select file">
+                                            Report
+                                        </button>
+                                    </div>
+                                {/if}
+                                {#if zipContent}
+                                    {#each Object.keys(zipContent) as fileName}
+                                        <div class='file-select px-2 d-inline-flex {selectedFileName === fileName ? "active" : ""}' title="{fileName}">
+                                            <input type="checkbox" bind:checked={zipContent[fileName].selected} />
+                                            <button type="button" class="btn btn-link p-0 ms-1" style="overflow: hidden;" on:click={() => selectedFileName = fileName} aria-label="Select file">
+                                                {`${fileName.substring(0, 35)}...`}
+                                            </button>
+                                            {#if zipContent[fileName].status == "incomplete"}
+                                                <span style="color: red;"><Icon name="x-lg"/></span>
+                                            {:else if zipContent[fileName].status == "processing"}
+                                                <div class="ms-1 spinner-border spinner-border-sm text-primary">
+                                                    <span class="visually-hidden">Loading...</span>
+                                                </div>
+                                            {:else if zipContent[fileName].status == "complete"}
+                                                <span style="color: green;"><Icon name="check-lg"/></span>
+                                            {/if}
+                                        </div>
+                                    {/each}
+                                {/if}
+                            </div>
+                        </div>
+                        <hr>
+                        <FormGroup>
+                            <Button 
+                                class="btn-styled btn-styled-primary w-100 py-2"
+                                on:click={download} 
+                                disabled={!Object.values(zipContent || {}).some(f => f.status === 'complete')}
+                            >
+                            Approve and Download
+                            </Button>
+                        </FormGroup>
+                    {/if}
+                    <hr>
+                    <Row>
+                        <span>Legend:</span>
+                        <span><span style="color:{removedColor};"><Icon name="square-fill"/></span> - Removed</span>
+                        <span><span style="color:{addedColor};"><Icon name="square-fill"/></span> - Added</span>
+                        <span><span style="color:{replacedColor};"><Icon name="square-fill"/></span> - Replaced</span>
+                        <span><span style="color:{emptyColor};"><Icon name="square-fill"/></span> - Empty</span>
+                        <span><span style="color:{backgroundColor};"><Icon name="square-fill"/></span> - Background</span>
+                    </Row>
+                </div>
+            </div>
+             <div class="resize-handle" on:mousedown={startResize} title="Drag to resize">
+                <Icon name="grip-vertical" />
+            </div>
+        </div>
+        <div class="insights-main">
+            <div class="header-section">
+                <h2><Icon name={codeInsightsLogo} /> Code Insights</h2>
+                <p class="text-muted">Analyze and remediate code using AI.</p>
+            </div>
+            <hr class="my-4"/>
             {#if selectedFileName == ''}
-                <div class="text-center">
-                    <h1>Select a file to view</h1>
+                <div class="text-center mt-4">
+                    <h3>Select a file to view</h3>
                 </div>
             {:else if selectedFileName == 'Report' && reportContent}
                 <div class="text-center">
@@ -629,36 +683,111 @@
                         </table>
                     </div>
                 </div>
-            {:else if selectedFileName
-                && zipContent
-                && zipContent[selectedFileName] 
-                && zipContent[selectedFileName].inputContent 
-                && zipContent[selectedFileName].outputContent
-            }
-                <Linecompare 
-                    oldText={zipContent[selectedFileName].inputContent} 
-                    newText={zipContent[selectedFileName].outputContent}
-                    removedColor={removedColor}
-                    addedColor={addedColor}
-                    replacedColor={replacedColor}
-                    emptyColor={emptyColor}
-                    backgroundColor={backgroundColor}
-                />
-            {:else if zipContent && zipContent[selectedFileName] && zipContent[selectedFileName].inputContent}
-                <div class="">
-                    <h1 class="text-center">{selectedFileName}</h1>
-                    <div style="overflow-x:auto;" class="ms-5">
-                        <pre>{zipContent[selectedFileName].inputContent}</pre>
-                    </div>
-                </div>
+            {:else if selectedFileName && zipContent && zipContent[selectedFileName]}
+                <Row class="mx-2">
+                    <Col>
+                        <h5 class="text-muted text-center mb-2">Input Code</h5>
+                        <textarea 
+                            bind:value={zipContent[selectedFileName].inputContent} 
+                            rows="25" 
+                            style="width: 100%; border-color: #dee2e6; border-radius: 6px; padding: 10px; font-family: monospace; resize: vertical;"
+                            readonly
+                        ></textarea>
+                    </Col>
+                    <Col>
+                        <h5 class="text-muted text-center mb-2">Output Code</h5>
+                        <textarea 
+                            bind:value={zipContent[selectedFileName].outputContent} 
+                            rows="25" 
+                            style="width: 100%; border-color: #dee2e6; border-radius: 6px; padding: 10px; font-family: monospace; resize: vertical;" 
+                            placeholder="Output will appear here..." 
+                            readonly
+                        ></textarea>
+                    </Col>
+                </Row>
             {:else}
                 <div></div>            {/if}
-        </Col>
-    </Row>
+        </div>
+    </div>
 </Container>
 {/if}
 
 <style>
+    .insights-layout {
+        display: flex;
+        align-items: flex-start;
+        gap: 0;
+        margin-top: 0;
+        min-height: calc(100vh - var(--ci-navbar-height, 0px));
+        padding: 0;
+    }
+
+    :global(.insights-container) {
+        padding-top: 0;
+    }
+
+    .insights-panel {
+        min-width: 240px;
+        max-width: 520px;
+        border: 1px solid #cfd4da;
+        border-radius: 8px;
+        background-color: #ffffff;
+        height: auto;
+        overflow: hidden;
+    }
+
+    .insights-panel-content {
+        padding: 20px 12px 16px;
+        max-height: calc(100vh - var(--ci-navbar-height, 0px) - 28px);
+        overflow: auto;
+    }
+
+    .panel-group {
+        display: flex;
+        align-items: stretch;
+        height: fit-content;
+        position: sticky;
+        top: calc(var(--ci-navbar-height, 0px) + 20px);
+        align-self: flex-start;
+    }
+
+    :global(body.code-insights-page .navbar) {
+        position: sticky;
+        top: 0;
+        z-index: 1030;
+    }
+
+    .insights-main {
+        flex: 1;
+        padding: 10px 0 0 10px;
+        min-height: 100%;
+    }
+
+    .resize-handle {
+        width: 16px;
+        cursor: col-resize;
+        align-self: stretch;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #6c757d;
+        background: transparent;
+    }
+
+    .insights-layout.resizing {
+        user-select: none;
+    }
+
+    .header-section {
+        text-align: center;
+        margin: 22px 0 10px;
+    }
+
+    .header-section h2 {
+        color: #2c3e50;
+        margin-bottom: 0.5rem;
+    }
+
     .active {
         background-color: lightgrey;
     }
@@ -673,5 +802,98 @@
         max-height: 300px;
         border: 1px solid lightgrey;
         border-radius: 5px;
+    }
+
+    @media (min-width: 768px) {
+        :global(.sidebar-col) {
+            border-right: 1px solid #dee2e6;
+            min-height: 80vh;
+        }
+    }
+
+    @media (max-width: 767.98px) {
+        :global(.sidebar-col) {
+            border-bottom: 1px solid #dee2e6;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+        }
+    }
+
+    /* Styled Buttons */
+    :global(.btn-styled) {
+        border-radius: 6px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        border: none;
+    }
+
+    :global(.btn-styled-primary) {
+        background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
+        color: white;
+    }
+
+    :global(.btn-styled-primary:hover:not(:disabled)) {
+        background: linear-gradient(135deg, #388bff 0%, #0d6efd 100%); /* Slightly lighter on hover */
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(13, 110, 253, 0.3);
+        color: white;
+    }
+    
+    :global(.btn-styled-primary:active:not(:disabled)) {
+        transform: translateY(1px);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    :global(.btn-styled-danger) {
+        background: linear-gradient(135deg, #dc3545 0%, #b02a37 100%);
+        color: white;
+    }
+
+    :global(.btn-styled-danger:hover:not(:disabled)) {
+        background: linear-gradient(135deg, #ff4d5e 0%, #dc3545 100%);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(220, 53, 69, 0.3);
+    }
+
+    :global(.btn-styled:disabled) {
+        background: #e9ecef;
+        color: #6c757d;
+        box-shadow: none;
+        cursor: not-allowed;
+    }
+
+    /* Custom File Input Styling */
+    :global(.form-control[type="file"]::file-selector-button) {
+        background: #ffffff;
+        color: #0d6efd;
+        border: 1px solid #0d6efd;
+        padding: 0.375rem 0.75rem;
+        margin-right: 1rem;
+        border-radius: 4px;
+        transition: all 0.3s ease;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    :global(.form-control[type="file"]::file-selector-button:hover) {
+        background: #f8f9fa;
+        box-shadow: 0 4px 6px rgba(13, 110, 253, 0.15);
+    }
+
+    /* Custom Dropdown Button Styling */
+    :global(.dropdown-toggle.btn-styled-primary) {
+        background: #ffffff;
+        color: #0d6efd;
+        border: 1px solid #0d6efd;
+    }
+
+    :global(.dropdown-toggle.btn-styled-primary:hover) {
+        background: #f8f9fa;
+        color: #0d6efd;
+        box-shadow: 0 4px 6px rgba(13, 110, 253, 0.15);
+        transform: translateY(-2px);
     }
 </style>

@@ -37,15 +37,19 @@
     let settingOrg = false;
     let selectedAzdoRepo: any = null;
 
+    // Azure DevOps PAT login
+    let azdoPATInput = '';
+    let azdoOrgLoginInput = '';
+    let azdoLoggingIn = false;
+    let showPATInput = false;
+
     // Review options
     let reviewMode: 'upload' | 'url' | 'github' | 'azuredevops' = 'url';
     let repoPath = "";
-    let repoUrl = "https://github.com/pallets/click.git";
+    let repoUrl = "";
     let selectedGithubRepo: any = null;
     let branch = "main";
     let maxCommits: number = 1;
-    let outputFormat: 'json' | 'text' = 'json';
-
     // Date range filtering
     let sinceDate: string = "";
     let untilDate: string = "";
@@ -57,6 +61,7 @@
     let selectedGuidelinesFile: File | null = null;
 
     // Results
+    let abortController: AbortController | null = null;
     let loading = false;
     let progress: number = 0;
     let progressTotal: number = 0;
@@ -66,7 +71,6 @@
     let myTimer: Timer;
     let reviews: any[] = [];
     let failedCommits: string[] = [];
-    let textOutput = "";
     let error = "";
 
     // Validation state
@@ -297,11 +301,11 @@
             return;
         }
 
+        abortController = new AbortController();
         loading = true;
         error = "";
         reviews = [];
         failedCommits = [];
-        textOutput = "";
         progress = 0;
         progressTotal = 0;
         progressCurrent = 0;
@@ -330,7 +334,7 @@
                 }
 
                 // Add form parameters
-                formData.append('format', outputFormat);
+                formData.append('format', 'json');
                 if (maxCommits) formData.append('max_commits', maxCommits.toString());
                 if (sinceDate) formData.append('since', sinceDate);
                 if (untilDate) formData.append('until', untilDate);
@@ -339,7 +343,8 @@
                 const response = await fetch(`${api_base}/review/upload`, {
                     method: 'POST',
                     body: formData,
-                    credentials: 'include'
+                    credentials: 'include',
+                    signal: abortController?.signal
                 });
 
                 progress = 100;
@@ -351,14 +356,8 @@
 
                 const data = await response.json();
 
-                if (outputFormat === 'json' && data.reviews) {
+                if (data.reviews) {
                     reviews = data.reviews;
-                    toasts.push({
-                        message: `Review completed! ${data.commit_count} commit(s) analyzed.`,
-                        color: 'success'
-                    });
-                } else if (outputFormat === 'text' && data.output) {
-                    textOutput = data.output;
                     toasts.push({
                         message: `Review completed! ${data.commit_count} commit(s) analyzed.`,
                         color: 'success'
@@ -394,7 +393,8 @@
                 const response = await fetch(`${api_base}/review/url/stream`, {
                     method: 'POST',
                     body: formData,
-                    credentials: 'include'
+                    credentials: 'include',
+                    signal: abortController?.signal
                 });
 
                 if (!response.ok) {
@@ -450,6 +450,10 @@
             }
 
         } catch (err: any) {
+            if (err.name === 'AbortError') {
+                // User cancelled — don't show error
+                return;
+            }
             const errorMessage = err.message || 'An error occurred';
             // Provide user-friendly error messages
             if (errorMessage.includes('clone') || errorMessage.includes('Clone')) {
@@ -468,6 +472,7 @@
             toasts.push({ message: error, color: 'danger' });
         } finally {
             loading = false;
+            abortController = null;
             progressStatus = "";
             myTimer?.stop();
         }
@@ -547,14 +552,40 @@
 
     function clearResults() {
         reviews = [];
-        textOutput = "";
         error = "";
-        selectedGuidelinesFile = null;
+        repoUrl = "";
+        branch = "main";
+        maxCommits = 1;
         sinceDate = "";
         untilDate = "";
+        selectedFile = null;
+        selectedGuidelinesFile = null;
+        if (fileInput) fileInput.value = '';
+        if (guidelinesInput) guidelinesInput.value = '';
+        selectedGithubRepo = null;
+        selectedAzdoRepo = null;
+        repoSearchQuery = '';
+        azdoRepoSearchQuery = '';
         validationErrors = {};
         failedCommits = [];
-        // Don't clear selectedGithubRepo to preserve user's selection
+        progress = 0;
+        progressTotal = 0;
+        progressCurrent = 0;
+        progressStatus = "";
+        currentCommit = "";
+        expandedCommits = new Set();
+        expandedSolutions = new Set();
+    }
+
+    function cancelReview() {
+        if (abortController) {
+            abortController.abort();
+            abortController = null;
+        }
+        loading = false;
+        progressStatus = "Cancelled";
+        myTimer?.stop();
+        toasts.push({ message: 'Review cancelled.', color: 'info' });
     }
 
     async function handleKeyDown(event: KeyboardEvent) {
@@ -708,31 +739,57 @@
         }
     }
 
-    function handleAzureDevOpsLogin() {
-        const width = 600;
-        const height = 700;
-        const left = (window.innerWidth - width) / 2;
-        const top = (window.innerHeight - height) / 2;
+    async function handleAzureDevOpsLogin() {
+        if (!azdoPATInput.trim()) {
+            toasts.push({ message: 'Please enter your Personal Access Token', color: 'warning' });
+            return;
+        }
+        if (!azdoOrgLoginInput.trim()) {
+            toasts.push({ message: 'Please enter your Azure DevOps organization name', color: 'warning' });
+            return;
+        }
 
-        const popup = window.open(
-            `${api_base}/auth/azuredevops/login`,
-            'azuredevops-oauth',
-            `width=${width},height=${height},left=${left},top=${top}`
-        );
+        azdoLoggingIn = true;
+        try {
+            const response = await fetch(`${api_base}/auth/azuredevops/pat-login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    pat: azdoPATInput.trim(),
+                    organization: azdoOrgLoginInput.trim()
+                })
+            });
 
-        const pollTimer = setInterval(async () => {
-            if (popup?.closed) {
-                clearInterval(pollTimer);
-                await checkAzureDevOpsAuth();
-                if (azureDevOpsAuth.authenticated) {
-                    toasts.push({
-                        message: `Signed in to Azure DevOps as ${azureDevOpsAuth.display_name}`,
-                        color: 'success'
-                    });
-                    reviewMode = 'azuredevops';
-                }
+            if (response.ok) {
+                const data = await response.json();
+                azureDevOpsAuth = {
+                    authenticated: true,
+                    display_name: data.display_name || '',
+                    email: data.email || '',
+                    organization: data.organization || ''
+                };
+                azdoOrgInput = data.organization;
+                azdoPATInput = '';
+                showPATInput = false;
+                toasts.push({
+                    message: `Signed in to Azure DevOps as ${azureDevOpsAuth.display_name}`,
+                    color: 'success'
+                });
+                reviewMode = 'azuredevops';
+                await loadAzdoRepos();
+            } else {
+                const errData = await response.json();
+                toasts.push({
+                    message: errData.detail || 'Failed to authenticate with Azure DevOps',
+                    color: 'danger'
+                });
             }
-        }, 500);
+        } catch (err) {
+            toasts.push({ message: 'Failed to connect to the server', color: 'danger' });
+        } finally {
+            azdoLoggingIn = false;
+        }
     }
 
     async function handleAzureDevOpsLogout() {
@@ -812,7 +869,6 @@
         selectedAzdoRepo = repo;
         repoUrl = repo.remote_url;
         branch = repo.default_branch || 'main';
-        azdoRepoDropdownOpen = false;
         azdoRepoSearchQuery = '';
     }
 
@@ -871,8 +927,50 @@
                             Sign Out
                         </Button>
                     </div>
+                {:else if showPATInput}
+                    <div class="pat-login-form">
+                        <div class="d-flex flex-column gap-2" style="min-width: 350px;">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <strong><Icon name="cloud" /> Azure DevOps</strong>
+                                <Button size="sm" color="link" on:click={() => { showPATInput = false; azdoPATInput = ''; }}>
+                                    Cancel
+                                </Button>
+                            </div>
+                            <Input
+                                type="password"
+                                placeholder="Personal Access Token"
+                                bind:value={azdoPATInput}
+                                size="sm"
+                            />
+                            <Input
+                                placeholder="Organization name"
+                                bind:value={azdoOrgLoginInput}
+                                size="sm"
+                                on:keypress={(e) => { if (e.key === 'Enter') handleAzureDevOpsLogin(); }}
+                            />
+                            <Button
+                                size="sm"
+                                color="primary"
+                                on:click={handleAzureDevOpsLogin}
+                                disabled={azdoLoggingIn}
+                                class="w-100"
+                            >
+                                {#if azdoLoggingIn}
+                                    <Spinner size="sm" /> Validating...
+                                {:else}
+                                    Connect
+                                {/if}
+                            </Button>
+                            <small class="text-muted">
+                                <a href="https://dev.azure.com/{azdoOrgLoginInput || 'YOUR_ORG'}/_usersSettings/tokens"
+                                   target="_blank" rel="noopener">
+                                    Create a PAT
+                                </a> with "Code (Read)" scope
+                            </small>
+                        </div>
+                    </div>
                 {:else}
-                    <Button color="primary" on:click={handleAzureDevOpsLogin}>
+                    <Button color="primary" on:click={() => showPATInput = true}>
                         <Icon name="cloud" /> Sign in with Azure DevOps
                     </Button>
                 {/if}
@@ -1019,82 +1117,60 @@
                     </div>
                 </div>
             {:else if reviewMode === 'azuredevops'}
-                <!-- Azure DevOps Organization + Repository Selector -->
-                <div class="mb-3">
-                    <label class="form-label">Organization Name</label>
-                    <div class="d-flex gap-2">
-                        <Input
-                            placeholder="my-organization"
-                            bind:value={azdoOrgInput}
-                            on:keypress={(e) => { if (e.key === 'Enter') setAzdoOrganization(); }}
-                            class="flex-grow-1"
-                        />
-                        <Button color="primary" on:click={setAzdoOrganization} disabled={settingOrg}>
-                            {#if settingOrg}
-                                <Spinner size="sm" />
+                <!-- Azure DevOps Repository Selector -->
+                <div class="row mb-3">
+                    <div class="col-md-8">
+                        <label class="form-label">Select Repository</label>
+                        <div class="repo-selector">
+                            {#if loadingAzdoRepos}
+                                <div class="d-flex align-items-center gap-2 p-2 border rounded">
+                                    <Spinner size="sm" /> Loading repositories...
+                                </div>
                             {:else}
-                                Load Repos
-                            {/if}
-                        </Button>
-                    </div>
-                    <small class="text-muted">Enter your Azure DevOps organization name (the part after dev.azure.com/)</small>
-                </div>
-
-                {#if azureDevOpsAuth.organization}
-                    <div class="row mb-3">
-                        <div class="col-md-8">
-                            <label class="form-label">Select Repository</label>
-                            <div class="repo-selector">
-                                {#if loadingAzdoRepos}
-                                    <div class="d-flex align-items-center gap-2 p-2 border rounded">
-                                        <Spinner size="sm" /> Loading repositories...
-                                    </div>
-                                {:else}
-                                    <Dropdown isOpen={azdoRepoDropdownOpen} toggle={() => azdoRepoDropdownOpen = !azdoRepoDropdownOpen} class="w-100">
-                                        <DropdownToggle caret class="w-100 text-start d-flex justify-content-between align-items-center">
-                                            {#if selectedAzdoRepo}
-                                                <span>{selectedAzdoRepo.full_name}</span>
+                                <Dropdown isOpen={azdoRepoDropdownOpen} toggle={() => azdoRepoDropdownOpen = !azdoRepoDropdownOpen} class="w-100">
+                                    <DropdownToggle caret class="w-100 text-start d-flex justify-content-between align-items-center">
+                                        {#if selectedAzdoRepo}
+                                            <span>{selectedAzdoRepo.full_name}</span>
+                                        {:else}
+                                            <span class="text-muted">Choose a repository...</span>
+                                        {/if}
+                                    </DropdownToggle>
+                                    <DropdownMenu class="w-100 repo-dropdown-menu">
+                                        <div class="p-2">
+                                            <Input
+                                                placeholder="Search repositories..."
+                                                bind:value={azdoRepoSearchQuery}
+                                                size="sm"
+                                            />
+                                        </div>
+                                        <div class="repo-list">
+                                            {#each filteredAzdoRepos as repo}
+                                                <DropdownItem on:click={() => selectAzdoRepo(repo)}>
+                                                    <div>
+                                                        <div class="fw-bold">{repo.full_name}</div>
+                                                        <small class="text-muted">Project: {repo.project_name}</small>
+                                                    </div>
+                                                </DropdownItem>
                                             {:else}
-                                                <span class="text-muted">Choose a repository...</span>
-                                            {/if}
-                                        </DropdownToggle>
-                                        <DropdownMenu class="w-100 repo-dropdown-menu">
-                                            <div class="p-2">
-                                                <Input
-                                                    placeholder="Search repositories..."
-                                                    bind:value={azdoRepoSearchQuery}
-                                                    size="sm"
-                                                />
-                                            </div>
-                                            <div class="repo-list">
-                                                {#each filteredAzdoRepos as repo}
-                                                    <DropdownItem on:click={() => selectAzdoRepo(repo)}>
-                                                        <div>
-                                                            <div class="fw-bold">{repo.full_name}</div>
-                                                            <small class="text-muted">Project: {repo.project_name}</small>
-                                                        </div>
-                                                    </DropdownItem>
-                                                {:else}
-                                                    <DropdownItem disabled>No repositories found</DropdownItem>
-                                                {/each}
-                                            </div>
-                                        </DropdownMenu>
-                                    </Dropdown>
-                                {/if}
-                            </div>
-                            <small class="text-muted">Repositories from {azureDevOpsAuth.organization}</small>
+                                                <DropdownItem disabled>No repositories found</DropdownItem>
+                                            {/each}
+                                        </div>
+                                    </DropdownMenu>
+                                </Dropdown>
+                            {/if}
                         </div>
-                        <div class="col-md-4">
-                            <label class="form-label">Branch Name</label>
-                            <Input
-                                placeholder="main"
-                                bind:value={branch}
-                                on:keypress={handleKeyDown}
-                            />
-                            <small class="text-muted">Default: {selectedAzdoRepo?.default_branch || 'main'}</small>
-                        </div>
+                        <small class="text-muted">Repositories from {azureDevOpsAuth.organization}</small>
                     </div>
-                {/if}
+                    <div class="col-md-4">
+                        <label class="form-label">Branch Name</label>
+                        <Input
+                            placeholder="main"
+                            bind:value={branch}
+                            on:keypress={handleKeyDown}
+                        />
+                        <small class="text-muted">Default: {selectedAzdoRepo?.default_branch || 'main'}</small>
+                    </div>
+                </div>
             {:else if reviewMode === 'url'}
                 <div class="row mb-3">
                     <div class="col-md-8">
@@ -1145,10 +1221,10 @@
                 </div>
             {/if}
 
-            <!-- Max Commits Option -->
+            <!-- Max Commits + Date Range (compact row) -->
             <div class="row mb-3">
-                <div class="col-md-12">
-                    <label class="form-label">Maximum Commits to Review</label>
+                <div class="col-md-2">
+                    <label class="form-label">Max Commits</label>
                     <Input
                         type="number"
                         placeholder="1"
@@ -1163,16 +1239,10 @@
                     />
                     {#if validationErrors.maxCommits}
                         <div class="invalid-feedback d-block">{validationErrors.maxCommits}</div>
-                    {:else}
-                        <small class="text-muted">Number of most recent commits to analyze (1-100). Only whole numbers are accepted.</small>
                     {/if}
                 </div>
-            </div>
-
-            <!-- Date Range Options (Optional) -->
-            <div class="row mb-3">
-                <div class="col-md-6">
-                    <label class="form-label">Start Date (Optional)</label>
+                <div class="col-md-5">
+                    <label class="form-label">Start Date <small class="text-muted">(optional)</small></label>
                     <Input
                         type="date"
                         bind:value={sinceDate}
@@ -1183,12 +1253,10 @@
                     />
                     {#if validationErrors.dates}
                         <div class="invalid-feedback d-block">{validationErrors.dates}</div>
-                    {:else}
-                        <small class="text-muted">Leave dates empty to get the latest commits. Filter commits from this date onwards.</small>
                     {/if}
                 </div>
-                <div class="col-md-6">
-                    <label class="form-label">End Date (Optional)</label>
+                <div class="col-md-5">
+                    <label class="form-label">End Date <small class="text-muted">(optional)</small></label>
                     <Input
                         type="date"
                         bind:value={untilDate}
@@ -1197,70 +1265,40 @@
                         max={new Date().toISOString().split('T')[0]}
                         class={validationErrors.dates && !validationErrors.dates.includes('Start') ? 'is-invalid' : ''}
                     />
-                    <small class="text-muted">Filter commits up to this date</small>
                 </div>
             </div>
 
-            <!-- Optional Guidelines Document -->
-            <div class="mb-3">
-                <label class="form-label">
-                    <Icon name="file-earmark-text" /> Review Guidelines (Optional)
-                </label>
-                <input
-                    type="file"
-                    class="form-control"
-                    accept=".pdf,.docx,.txt"
-                    bind:this={guidelinesInput}
-                    on:change={handleGuidelinesSelect}
-                />
-                {#if selectedGuidelinesFile}
-                    <div class="mt-2 d-flex align-items-center gap-2">
-                        <Badge color="success">
-                            <Icon name="check-circle-fill" /> {selectedGuidelinesFile.name}
-                        </Badge>
-                        <Button 
-                            size="sm"
-                            color="danger"
-                            outline
-                            on:click={() => {
-                                selectedGuidelinesFile = null;
-                                if (guidelinesInput) guidelinesInput.value = '';
-                            }}
-                        >
-                            <Icon name="x-circle" /> Remove
-                        </Button>
+            <!-- Optional Guidelines Document (compact) -->
+            <div class="row mb-3">
+                <div class="col">
+                    <label class="form-label">
+                        <Icon name="file-earmark-text" /> Review Guidelines <small class="text-muted">(optional)</small>
+                    </label>
+                    <div class="d-flex align-items-center gap-2">
+                        <input
+                            type="file"
+                            class="form-control"
+                            accept=".pdf,.docx,.txt"
+                            bind:this={guidelinesInput}
+                            on:change={handleGuidelinesSelect}
+                        />
+                        {#if selectedGuidelinesFile}
+                            <Badge color="success" class="text-nowrap">
+                                <Icon name="check-circle-fill" /> {selectedGuidelinesFile.name}
+                            </Badge>
+                            <Button
+                                size="sm"
+                                color="danger"
+                                outline
+                                on:click={() => {
+                                    selectedGuidelinesFile = null;
+                                    if (guidelinesInput) guidelinesInput.value = '';
+                                }}
+                            >
+                                <Icon name="x-circle" />
+                            </Button>
+                        {/if}
                     </div>
-                {:else}
-                    <small class="text-muted d-block mt-1">
-                        <Icon name="info-circle" /> Upload a PDF, DOCX, or TXT file with custom review guidelines to guide the AI's analysis (e.g., security standards, coding conventions, specific focus areas)
-                    </small>
-                {/if}
-            </div>
-
-            <div class="mb-3">
-                <label class="form-label fw-bold">Output Format</label>
-                <div class="btn-group w-100" role="group">
-                    <input 
-                        type="radio" 
-                        class="btn-check" 
-                        bind:group={outputFormat} 
-                        value="json" 
-                        id="format-json"
-                    />
-                    <label class="btn btn-outline-secondary" for="format-json">
-                        <Icon name="braces" /> Structured View
-                    </label>
-
-                    <input 
-                        type="radio" 
-                        class="btn-check" 
-                        bind:group={outputFormat} 
-                        value="text" 
-                        id="format-text"
-                    />
-                    <label class="btn btn-outline-secondary" for="format-text">
-                        <Icon name="file-text" /> Plain Text
-                    </label>
                 </div>
             </div>
 
@@ -1268,9 +1306,15 @@
                 <Button color="primary" on:click={handleReview} disabled={loading} class="flex-grow-1">
                     <Icon name="play-fill" /> Start Review
                 </Button>
-                <Button color="secondary" on:click={clearResults} disabled={loading}>
-                    <Icon name="x-circle" /> Clear
-                </Button>
+                {#if loading}
+                    <Button color="danger" on:click={cancelReview}>
+                        <Icon name="stop-fill" /> Cancel
+                    </Button>
+                {:else}
+                    <Button color="secondary" on:click={clearResults}>
+                        <Icon name="x-circle" /> Clear
+                    </Button>
+                {/if}
             </div>
         </CardBody>
     </Card>
@@ -1347,7 +1391,7 @@
     {/if}
 
     <!-- JSON Results -->
-    {#if outputFormat === 'json' && reviews.length > 0}
+    {#if reviews.length > 0}
         <div class="reviews-container">
             {#each reviews as review}
                 <Card class="mb-3 review-card">
@@ -1553,15 +1597,6 @@
         </div>
     {/if}
 
-    <!-- Text Output -->
-    {#if outputFormat === 'text' && textOutput}
-        <Card class="mb-4">
-            <CardBody>
-                <CardTitle>Review Output</CardTitle>
-                <pre class="text-output">{textOutput}</pre>
-            </CardBody>
-        </Card>
-    {/if}
 </div>
 
 <style>
@@ -1673,16 +1708,6 @@
     .security-description {
         font-size: 0.85rem;
         color: #495057;
-    }
-
-    .text-output {
-        background-color: #1e1e1e;
-        color: #d4d4d4;
-        padding: 1rem;
-        border-radius: 4px;
-        overflow-x: auto;
-        font-size: 0.85rem;
-        line-height: 1.5;
     }
 
     .reviews-container {
@@ -1854,6 +1879,10 @@
         height: 28px;
         border-radius: 50%;
         border: 2px solid #28a745;
+    }
+
+    .pat-login-form {
+        padding: 5px;
     }
 
     /* Repository Selector Styles */
