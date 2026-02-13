@@ -505,12 +505,13 @@
     }
 
     function scrollToResults() {
-        // Use setTimeout to ensure the DOM has updated
+        // Use setTimeout to ensure the DOM has updated, then scroll results to top of viewport
         setTimeout(() => {
             if (resultsSection) {
-                resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                const yOffset = resultsSection.getBoundingClientRect().top + window.pageYOffset - 10;
+                window.scrollTo({ top: yOffset, behavior: 'smooth' });
             }
-        }, 100);
+        }, 150);
     }
 
     // --- Cost Estimation ---
@@ -1229,103 +1230,75 @@
 <div id="main" class="main">
     <div class="header-section">
         <h2><Icon name="file-code" /> Code Review Assistant</h2>
-        <p class="text-muted">Analyze Git commits with AI-powered insights</p>
-
-        <!-- Authentication Status -->
-        <div class="auth-section mt-3 d-flex justify-content-center gap-3 flex-wrap">
-            <!-- GitHub Auth -->
-            <div class="auth-provider-card">
-                {#if githubAuth.authenticated}
-                    <div class="d-flex align-items-center gap-2">
-                        {#if githubAuth.avatar_url}
-                            <img src={githubAuth.avatar_url} alt={githubAuth.username} class="github-avatar" />
-                        {/if}
-                        <span class="text-success">
-                            <Icon name="check-circle-fill" /> <strong>{githubAuth.username}</strong>
-                        </span>
-                        <Button size="sm" color="secondary" outline on:click={handleGitHubLogout}>
-                            Sign Out
-                        </Button>
-                    </div>
-                {:else}
-                    <Button color="dark" on:click={handleGitHubLogin}>
-                        <Icon name="github" /> Sign in with GitHub
-                    </Button>
-                {/if}
-            </div>
-
-            <!-- Azure DevOps Auth -->
-            <div class="auth-provider-card">
-                {#if azureDevOpsAuth.authenticated}
-                    <div class="d-flex align-items-center gap-2">
-                        <span class="text-primary">
-                            <Icon name="check-circle-fill" /> <strong>{azureDevOpsAuth.display_name}</strong>
-                        </span>
-                        {#if azureDevOpsAuth.organization}
-                            <Badge color="info">{azureDevOpsAuth.organization}</Badge>
-                        {/if}
-                        <Button size="sm" color="secondary" outline on:click={handleAzureDevOpsLogout}>
-                            Sign Out
-                        </Button>
-                    </div>
-                {:else if showPATInput}
-                    <div class="pat-login-form">
-                        <div class="d-flex flex-column gap-2" style="min-width: 350px;">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <strong><Icon name="cloud" /> Azure DevOps</strong>
-                                <Button size="sm" color="link" on:click={() => { showPATInput = false; azdoPATInput = ''; }}>
-                                    Cancel
-                                </Button>
-                            </div>
-                            <Input
-                                type="password"
-                                placeholder="Personal Access Token"
-                                bind:value={azdoPATInput}
-                                size="sm"
-                            />
-                            <Input
-                                placeholder="Organization name"
-                                bind:value={azdoOrgLoginInput}
-                                size="sm"
-                                on:keypress={(e) => { if (e.key === 'Enter') handleAzureDevOpsLogin(); }}
-                            />
-                            <Button
-                                size="sm"
-                                color="primary"
-                                on:click={handleAzureDevOpsLogin}
-                                disabled={azdoLoggingIn}
-                                class="w-100"
-                            >
-                                {#if azdoLoggingIn}
-                                    <Spinner size="sm" /> Validating...
-                                {:else}
-                                    Connect
-                                {/if}
-                            </Button>
-                            <small class="text-muted">
-                                <a href="https://dev.azure.com/{azdoOrgLoginInput || 'YOUR_ORG'}/_usersSettings/tokens"
-                                   target="_blank" rel="noopener">
-                                    Create a PAT
-                                </a> with "Code (Read)" scope
-                            </small>
-                        </div>
-                    </div>
-                {:else}
-                    <Button color="primary" on:click={() => showPATInput = true}>
-                        <Icon name="cloud" /> Sign in with Azure DevOps
-                    </Button>
-                {/if}
-            </div>
-        </div>
-        <p class="text-muted mt-2 mb-0">
-            <small>Sign in to access your private repositories</small>
-        </p>
+        <p class="text-muted mb-0">Analyze Git commits with AI-powered insights</p>
     </div>
 
     <!-- Configuration Panel -->
     <Card class="mb-4 config-card">
         <CardBody>
-            <CardTitle><Icon name="gear" /> Review Configuration</CardTitle>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <CardTitle class="mb-0"><Icon name="gear" /> Review Configuration</CardTitle>
+                <div class="d-flex align-items-center gap-2">
+                    {#if githubAuth.authenticated}
+                        <div class="auth-chip auth-chip-success">
+                            {#if githubAuth.avatar_url}
+                                <img src={githubAuth.avatar_url} alt={githubAuth.username} class="github-avatar" />
+                            {/if}
+                            <Icon name="github" />
+                            <span>{githubAuth.username}</span>
+                            <button class="auth-chip-close" on:click={handleGitHubLogout} title="Sign out">
+                                <Icon name="x" />
+                            </button>
+                        </div>
+                    {:else}
+                        <Button size="sm" color="dark" outline on:click={handleGitHubLogin}>
+                            <Icon name="github" /> GitHub
+                        </Button>
+                    {/if}
+                    {#if azureDevOpsAuth.authenticated}
+                        <div class="auth-chip auth-chip-primary">
+                            <Icon name="cloud" />
+                            <span>{azureDevOpsAuth.display_name}</span>
+                            {#if azureDevOpsAuth.organization}
+                                <Badge color="info" class="ms-1" style="font-size: 0.7rem;">{azureDevOpsAuth.organization}</Badge>
+                            {/if}
+                            <button class="auth-chip-close" on:click={handleAzureDevOpsLogout} title="Sign out">
+                                <Icon name="x" />
+                            </button>
+                        </div>
+                    {:else}
+                        <Button size="sm" color="primary" outline on:click={() => showPATInput = true}>
+                            <Icon name="cloud" /> Azure DevOps
+                        </Button>
+                    {/if}
+                </div>
+            </div>
+
+            <!-- Azure DevOps PAT Login (collapsible) -->
+            {#if showPATInput && !azureDevOpsAuth.authenticated}
+                <div class="pat-login-bar mb-3">
+                    <div class="d-flex align-items-end gap-2 flex-wrap">
+                        <div style="flex: 1; min-width: 180px;">
+                            <label class="form-label mb-1"><small>Personal Access Token</small></label>
+                            <Input type="password" placeholder="Paste your PAT" bind:value={azdoPATInput} size="sm" />
+                        </div>
+                        <div style="flex: 1; min-width: 150px;">
+                            <label class="form-label mb-1"><small>Organization</small></label>
+                            <Input placeholder="org name" bind:value={azdoOrgLoginInput} size="sm"
+                                on:keypress={(e) => { if (e.key === 'Enter') handleAzureDevOpsLogin(); }} />
+                        </div>
+                        <Button size="sm" color="primary" on:click={handleAzureDevOpsLogin} disabled={azdoLoggingIn}>
+                            {#if azdoLoggingIn}<Spinner size="sm" />{:else}Connect{/if}
+                        </Button>
+                        <Button size="sm" color="secondary" outline on:click={() => { showPATInput = false; azdoPATInput = ''; }}>
+                            Cancel
+                        </Button>
+                    </div>
+                    <small class="text-muted mt-1 d-block">
+                        <a href="https://dev.azure.com/{azdoOrgLoginInput || 'YOUR_ORG'}/_usersSettings/tokens" target="_blank" rel="noopener">Create a PAT</a> with "Code (Read)" scope
+                    </small>
+                </div>
+            {/if}
             
             <!-- Review Mode Selection -->
             <div class="mb-3">
@@ -1387,9 +1360,9 @@
 
             <!-- Conditional Inputs Based on Mode -->
             {#if reviewMode === 'github'}
-                <!-- GitHub Repository Selector -->
-                <div class="row mb-3">
-                    <div class="col-md-8">
+                <!-- GitHub: Repo + Branch + Max Commits on one row -->
+                <div class="row mb-3 align-items-end">
+                    <div class="col-md-6">
                         <label class="form-label">Select Repository</label>
                         <div class="repo-selector">
                             {#if loadingRepos}
@@ -1445,22 +1418,26 @@
                                 </Dropdown>
                             {/if}
                         </div>
-                        <small class="text-muted">Select from your public and private repositories</small>
                     </div>
                     <div class="col-md-4">
-                        <label class="form-label">Branch Name</label>
-                        <Input
-                            placeholder="main"
-                            bind:value={branch}
-                            on:keypress={handleKeyDown}
-                        />
-                        <small class="text-muted">Default: {selectedGithubRepo?.default_branch || 'main'}</small>
+                        <label class="form-label">Branch</label>
+                        <Input placeholder="main" bind:value={branch} on:keypress={handleKeyDown} />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Commits</label>
+                        <Input type="number" placeholder="1" bind:value={maxCommits} min="1" max="100" step="1"
+                            on:keypress={handleKeyDown} on:blur={normalizeMaxCommits}
+                            on:change={() => validateField('maxCommits')}
+                            class={validationErrors.maxCommits ? 'is-invalid' : ''} />
+                        {#if validationErrors.maxCommits}
+                            <div class="invalid-feedback d-block">{validationErrors.maxCommits}</div>
+                        {/if}
                     </div>
                 </div>
             {:else if reviewMode === 'azuredevops'}
-                <!-- Azure DevOps Repository Selector -->
-                <div class="row mb-3">
-                    <div class="col-md-8">
+                <!-- Azure DevOps: Repo + Branch + Max Commits on one row -->
+                <div class="row mb-3 align-items-end">
+                    <div class="col-md-6">
                         <label class="form-label">Select Repository</label>
                         <div class="repo-selector">
                             {#if loadingAzdoRepos}
@@ -1500,21 +1477,26 @@
                                 </Dropdown>
                             {/if}
                         </div>
-                        <small class="text-muted">Repositories from {azureDevOpsAuth.organization}</small>
                     </div>
                     <div class="col-md-4">
-                        <label class="form-label">Branch Name</label>
-                        <Input
-                            placeholder="main"
-                            bind:value={branch}
-                            on:keypress={handleKeyDown}
-                        />
-                        <small class="text-muted">Default: {selectedAzdoRepo?.default_branch || 'main'}</small>
+                        <label class="form-label">Branch</label>
+                        <Input placeholder="main" bind:value={branch} on:keypress={handleKeyDown} />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Commits</label>
+                        <Input type="number" placeholder="1" bind:value={maxCommits} min="1" max="100" step="1"
+                            on:keypress={handleKeyDown} on:blur={normalizeMaxCommits}
+                            on:change={() => validateField('maxCommits')}
+                            class={validationErrors.maxCommits ? 'is-invalid' : ''} />
+                        {#if validationErrors.maxCommits}
+                            <div class="invalid-feedback d-block">{validationErrors.maxCommits}</div>
+                        {/if}
                     </div>
                 </div>
             {:else if reviewMode === 'url'}
-                <div class="row mb-3">
-                    <div class="col-md-8">
+                <!-- URL: Repo URL + Branch + Max Commits on one row -->
+                <div class="row mb-3 align-items-end">
+                    <div class="col-md-6">
                         <label class="form-label">Repository URL</label>
                         <Input
                             placeholder="https://github.com/username/repo.git"
@@ -1526,63 +1508,57 @@
                         />
                         {#if validationErrors.repoUrl}
                             <div class="invalid-feedback d-block">{validationErrors.repoUrl}</div>
-                        {:else if githubAuth.authenticated || azureDevOpsAuth.authenticated}
-                            <small class="text-muted">Enter any Git repository URL. Your sign-in credentials will be used for private repos.</small>
-                        {:else}
-                            <small class="text-muted">Enter a public Git repository URL. Sign in above to access private repos.</small>
                         {/if}
                     </div>
                     <div class="col-md-4">
-                        <label class="form-label">Branch Name</label>
-                        <Input
-                            placeholder="main"
-                            bind:value={branch}
-                            on:keypress={handleKeyDown}
-                        />
-                        <small class="text-muted">e.g., main, master, develop</small>
+                        <label class="form-label">Branch</label>
+                        <Input placeholder="main" bind:value={branch} on:keypress={handleKeyDown} />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Commits</label>
+                        <Input type="number" placeholder="1" bind:value={maxCommits} min="1" max="100" step="1"
+                            on:keypress={handleKeyDown} on:blur={normalizeMaxCommits}
+                            on:change={() => validateField('maxCommits')}
+                            class={validationErrors.maxCommits ? 'is-invalid' : ''} />
+                        {#if validationErrors.maxCommits}
+                            <div class="invalid-feedback d-block">{validationErrors.maxCommits}</div>
+                        {/if}
                     </div>
                 </div>
             {:else}
-                <div class="mb-3">
-                    <label class="form-label">Upload Repository ZIP</label>
-                    <input
-                        type="file"
-                        class="form-control {validationErrors.file ? 'is-invalid' : ''}"
-                        accept=".zip"
-                        bind:this={fileInput}
-                        on:change={handleFileSelect}
-                    />
-                    {#if validationErrors.file}
-                        <div class="invalid-feedback d-block">{validationErrors.file}</div>
-                    {:else if selectedFile}
-                        <small class="text-success"><Icon name="check-circle" /> Selected: {selectedFile.name}</small>
-                    {:else}
-                        <small class="text-muted">Upload a .zip file containing your Git repository (must include .git folder)</small>
-                    {/if}
+                <!-- Upload: File + Max Commits on one row -->
+                <div class="row mb-3 align-items-end">
+                    <div class="col-md-10">
+                        <label class="form-label">Upload Repository ZIP</label>
+                        <input
+                            type="file"
+                            class="form-control {validationErrors.file ? 'is-invalid' : ''}"
+                            accept=".zip"
+                            bind:this={fileInput}
+                            on:change={handleFileSelect}
+                        />
+                        {#if validationErrors.file}
+                            <div class="invalid-feedback d-block">{validationErrors.file}</div>
+                        {:else if selectedFile}
+                            <small class="text-success"><Icon name="check-circle" /> {selectedFile.name}</small>
+                        {/if}
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Commits</label>
+                        <Input type="number" placeholder="1" bind:value={maxCommits} min="1" max="100" step="1"
+                            on:keypress={handleKeyDown} on:blur={normalizeMaxCommits}
+                            on:change={() => validateField('maxCommits')}
+                            class={validationErrors.maxCommits ? 'is-invalid' : ''} />
+                        {#if validationErrors.maxCommits}
+                            <div class="invalid-feedback d-block">{validationErrors.maxCommits}</div>
+                        {/if}
+                    </div>
                 </div>
             {/if}
 
-            <!-- Max Commits + Date Range (compact row) -->
+            <!-- Date Range -->
             <div class="row mb-3">
-                <div class="col-md-2">
-                    <label class="form-label">Max Commits</label>
-                    <Input
-                        type="number"
-                        placeholder="1"
-                        bind:value={maxCommits}
-                        min="1"
-                        max="100"
-                        step="1"
-                        on:keypress={handleKeyDown}
-                        on:blur={normalizeMaxCommits}
-                        on:change={() => validateField('maxCommits')}
-                        class={validationErrors.maxCommits ? 'is-invalid' : ''}
-                    />
-                    {#if validationErrors.maxCommits}
-                        <div class="invalid-feedback d-block">{validationErrors.maxCommits}</div>
-                    {/if}
-                </div>
-                <div class="col-md-5">
+                <div class="col-md-6">
                     <label class="form-label">Start Date <small class="text-muted">(optional)</small></label>
                     <Input
                         type="date"
@@ -1596,7 +1572,7 @@
                         <div class="invalid-feedback d-block">{validationErrors.dates}</div>
                     {/if}
                 </div>
-                <div class="col-md-5">
+                <div class="col-md-6">
                     <label class="form-label">End Date <small class="text-muted">(optional)</small></label>
                     <Input
                         type="date"
@@ -1793,25 +1769,30 @@
     <!-- JSON Results -->
     {#if reviews.length > 0}
         <div class="reviews-container">
-            {#each reviews as review}
-                <Card class="mb-3 review-card">
-                    <CardBody>
-                        <div class="commit-header" on:click={() => toggleCommit(review.commit_hash)} on:keypress={() => toggleCommit(review.commit_hash)} role="button" tabindex="0">
-                            <div class="d-flex justify-content-between align-items-start">
-                                <div class="flex-grow-1">
-                                    <h5 class="mb-1">
-                                        <Icon name={expandedCommits.has(review.commit_hash) ? "chevron-down" : "chevron-right"} />
-                                        <code class="commit-hash">{review.commit_hash}</code>
-                                    </h5>
-                                    <p class="commit-message mb-2">{review.commit_message}</p>
-                                </div>
-                                <Badge color="secondary">{review.findings.length} finding{review.findings.length !== 1 ? 's' : ''}</Badge>
-                            </div>
+            {#each reviews as review, reviewIdx}
+                <div class="review-card">
+                    <div class="review-card-header" on:click={() => toggleCommit(review.commit_hash)} on:keypress={() => toggleCommit(review.commit_hash)} role="button" tabindex="0">
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="review-card-number">#{reviewIdx + 1}</span>
+                            <Icon name={expandedCommits.has(review.commit_hash) ? "chevron-down" : "chevron-right"} />
+                            <code class="commit-hash">{review.commit_hash}</code>
+                            <span class="commit-message-header">{review.commit_message}</span>
                         </div>
+                        <div class="d-flex align-items-center gap-2">
+                            {#if review.security_summary && review.security_summary.risk_level !== 'None'}
+                                <Badge color={getRiskLevelColor(review.security_summary.risk_level)}>
+                                    <Icon name="shield-exclamation" /> {review.security_summary.risk_level}
+                                </Badge>
+                            {/if}
+                            <Badge color={review.findings.length > 0 ? 'warning' : 'success'} class="findings-badge">
+                                {review.findings.length} finding{review.findings.length !== 1 ? 's' : ''}
+                            </Badge>
+                        </div>
+                    </div>
 
-                        <Collapse isOpen={expandedCommits.has(review.commit_hash)}>
-                            <div class="mt-3">
-                                <p class="text-muted summary-text">{review.summary}</p>
+                    <Collapse isOpen={expandedCommits.has(review.commit_hash)}>
+                        <div class="review-card-body">
+                            <div class="summary-text">{review.summary}</div>
                                 
                                 {#if review.findings.length > 0}
                                     <h6 class="mt-3 mb-2"><Icon name="code-slash" /> Code Review Findings</h6>
@@ -2011,10 +1992,9 @@
                                         {/if}
                                     </div>
                                 {/if}
-                            </div>
-                        </Collapse>
-                    </CardBody>
-                </Card>
+                        </div>
+                    </Collapse>
+                </div>
             {/each}
         </div>
     {/if}
@@ -2110,72 +2090,185 @@
 
     .header-section {
         text-align: center;
-        margin-bottom: 2rem;
+        margin-bottom: 1.5rem;
     }
 
     .header-section h2 {
         color: #2c3e50;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.25rem;
     }
 
     .config-card {
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
 
+    /* Auth chip styles */
+    .auth-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 500;
+    }
+
+    .auth-chip-success {
+        background-color: #e8f5e9;
+        color: #2e7d32;
+        border: 1px solid #c8e6c9;
+    }
+
+    .auth-chip-primary {
+        background-color: #e3f2fd;
+        color: #1565c0;
+        border: 1px solid #bbdefb;
+    }
+
+    .auth-chip-close {
+        background: none;
+        border: none;
+        padding: 0;
+        cursor: pointer;
+        opacity: 0.6;
+        color: inherit;
+        display: inline-flex;
+        align-items: center;
+        line-height: 1;
+    }
+
+    .auth-chip-close:hover {
+        opacity: 1;
+    }
+
+    .github-avatar {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+    }
+
+    /* PAT login bar */
+    .pat-login-bar {
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 12px 16px;
+    }
+
+    /* Review card styles — enhanced */
     .review-card {
-        box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-        transition: box-shadow 0.2s ease;
+        border-radius: 10px;
+        overflow: hidden;
+        margin-bottom: 16px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+        border: 1px solid #e0e4e8;
+        background: white;
+        transition: box-shadow 0.2s ease, transform 0.15s ease;
     }
 
     .review-card:hover {
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        box-shadow: 0 4px 20px rgba(0,0,0,0.14);
+        transform: translateY(-1px);
     }
 
-    .commit-header {
+    .review-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 20px;
+        background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+        color: #e2e8f0;
         cursor: pointer;
         user-select: none;
+        gap: 12px;
     }
 
-    .commit-hash {
-        font-size: 0.9rem;
-        background-color: #f8f9fa;
-        padding: 2px 6px;
-        border-radius: 3px;
-        color: #495057;
+    .review-card-number {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: rgba(255,255,255,0.15);
+        color: #94a3b8;
+        font-size: 0.75rem;
+        font-weight: 700;
+        flex-shrink: 0;
     }
 
-    .commit-message {
-        color: #495057;
-        font-size: 0.95rem;
+    .review-card-header .commit-hash {
+        font-size: 0.85rem;
+        background-color: rgba(255,255,255,0.1);
+        padding: 2px 8px;
+        border-radius: 4px;
+        color: #93c5fd;
+        font-family: 'SFMono-Regular', Consolas, monospace;
+    }
+
+    .commit-message-header {
+        color: #cbd5e1;
+        font-size: 0.85rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+        min-width: 0;
+    }
+
+    :global(.findings-badge) {
+        font-size: 0.75rem !important;
+        padding: 4px 10px !important;
+    }
+
+    .review-card-body {
+        padding: 20px;
+        background: #fafbfc;
     }
 
     .summary-text {
         font-size: 0.9rem;
         line-height: 1.6;
-        padding: 10px;
-        background-color: #f8f9fa;
-        border-radius: 4px;
-        border-left: 3px solid #007bff;
+        padding: 12px 16px;
+        background-color: #ffffff;
+        border-radius: 6px;
+        border-left: 4px solid #3b82f6;
+        color: #475569;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        margin-bottom: 16px;
     }
 
     .file-path {
         font-size: 0.85rem;
-        background-color: #f8f9fa;
-        padding: 2px 4px;
-        border-radius: 2px;
+        background-color: #f1f5f9;
+        padding: 2px 6px;
+        border-radius: 3px;
         color: #d63384;
     }
 
     .findings-table {
         font-size: 0.9rem;
         margin-top: 1rem;
+        border-radius: 6px;
+        overflow: hidden;
+    }
+
+    :global(.findings-table thead th) {
+        background-color: #f1f5f9 !important;
+        color: #475569;
+        font-weight: 600;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        border-bottom: 2px solid #e2e8f0 !important;
     }
 
     .security-section {
-        padding: 15px;
-        background-color: #fff8f8;
-        border-radius: 6px;
+        padding: 16px;
+        background-color: #fef2f2;
+        border-radius: 8px;
         border-left: 4px solid #dc3545;
+        margin-top: 16px;
     }
 
     .security-stats {
@@ -2443,7 +2536,7 @@
         box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.25) !important;
     }
 
-    /* Enhanced toast notification styles - override for more visibility */
+    /* Enhanced toast notification styles */
     :global(.toast) {
         min-width: 350px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
@@ -2462,31 +2555,6 @@
     :global(.toast.bg-success) {
         background-color: #28a745 !important;
         color: white !important;
-    }
-
-    /* Authentication Styles */
-    .auth-section {
-        padding: 15px;
-        background-color: #f8f9fa;
-        border-radius: 8px;
-    }
-
-    .auth-provider-card {
-        padding: 10px 20px;
-        background: white;
-        border-radius: 8px;
-        border: 1px solid #e0e0e0;
-    }
-
-    .github-avatar {
-        width: 28px;
-        height: 28px;
-        border-radius: 50%;
-        border: 2px solid #28a745;
-    }
-
-    .pat-login-form {
-        padding: 5px;
     }
 
     /* Repository Selector Styles */
