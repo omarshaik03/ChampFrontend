@@ -58,8 +58,6 @@
     // File upload
     let fileInput: HTMLInputElement;
     let selectedFile: File | null = null;
-    let guidelinesInput: HTMLInputElement;
-    let selectedGuidelinesFile: File | null = null;
 
     // Results
     let abortController: AbortController | null = null;
@@ -97,6 +95,9 @@
     let actualInputTokens: number | null = null;
     let actualOutputTokens: number | null = null;
     let actualCost: string | null = null;
+
+    // Modal mode: switches the single modal between estimation and results
+    let costModalMode: 'estimation' | 'results' = 'estimation';
 
     // Expandable commit details
     let expandedCommits: Set<string> = new Set();
@@ -548,16 +549,21 @@
         const costPerInput = llmConfig.cost_per_input_token;
         const costPerOutput = llmConfig.cost_per_output_token;
 
-        // Per-commit estimates:
-        // - System prompt: ~500 tokens (review instructions, format rules)
-        // - Average diff per commit: ~2500 tokens
-        // - Output per commit: max_output_tokens from config
-        const promptTokensPerCommit = 500;
-        const codeTokensPerCommit = 2500;
+        // Per-commit estimates based on review_agent.py constants:
+        // - System prompt: ~500 tokens (review instructions, format rules, JSON schema)
+        // - Format instructions (Pydantic schema): ~200 tokens
+        // - Commit metadata (SHA, summary, description): ~100 tokens
+        // - Code diff: MAX_TOTAL_DIFF_CHARS=12000, at ~4 chars/token ≈ 3000 tokens max
+        //   Average commit is smaller, use ~1500 tokens as typical estimate
+        // - Output: typically uses 40-60% of max_output_tokens, use 50% as estimate
+        const promptTokensPerCommit = 800;     // system prompt + format instructions + metadata
+        const codeTokensPerCommit = 1500;      // typical diff size (~6000 chars / 4)
+        const outputPerCommit = Math.round(maxOutputPerCommit * 0.5);  // typical usage ~50% of max
+
         const totalPromptTokens = promptTokensPerCommit * numCommits;
         const totalCodeTokens = codeTokensPerCommit * numCommits;
         const totalInputTokens = totalPromptTokens + totalCodeTokens;
-        const totalOutputTokens = maxOutputPerCommit * numCommits;
+        const totalOutputTokens = outputPerCommit * numCommits;
 
         const inputCost = totalInputTokens * costPerInput;
         const outputCost = totalOutputTokens * costPerOutput;
@@ -602,6 +608,7 @@
     function closeCostModal() {
         showCostModal = false;
         costEstimationError = null;
+        costModalMode = 'estimation';
     }
 
     async function proceedWithReview() {
@@ -638,10 +645,6 @@
                 const formData = new FormData();
                 formData.append('file', selectedFile);
 
-                // Add guidelines file if provided
-                if (selectedGuidelinesFile) {
-                    formData.append('guidelines_file', selectedGuidelinesFile);
-                }
 
                 // Add form parameters
                 formData.append('format', 'json');
@@ -693,10 +696,6 @@
                 if (untilDate) formData.append('until', untilDate);
                 if (branch) formData.append('branch', branch);
 
-                // Add guidelines file if provided
-                if (selectedGuidelinesFile) {
-                    formData.append('guidelines_file', selectedGuidelinesFile);
-                }
 
                 // Use streaming endpoint for real-time progress
                 // Include credentials to send auth cookies for private repo access
@@ -786,29 +785,55 @@
             progressStatus = "";
             myTimer?.stop();
 
-            // Compute actual cost for the summary banner
+            // Compute actual cost and show results modal
             if (reviews.length > 0) {
-                computeActualCostResults();
+                await computeActualCostResults();
             }
         }
     }
 
-    function computeActualCostResults() {
+    async function computeActualCostResults() {
         actualTimeTaken = (Date.now() - reviewStartTime) / 1000;
-        const actualCommits = reviews.length;
 
         try {
+            // Try to fetch LLM config if not already cached
+            if (!cachedLlmConfig) {
+                try {
+                    await fetchLlmConfig();
+                } catch (e) {
+                    console.warn('Could not fetch LLM config for cost calculation');
+                }
+            }
+
             if (cachedLlmConfig) {
-                const est = computeCostForCommits(actualCommits, cachedLlmConfig);
-                actualOutputTokens = est.outputTokens;
-                actualCost = est.cost;
-                actualInputTokens = est.inputTokens;
-            } else {
-                console.warn('Cost summary: LLM config not cached, skipping cost calculation');
+                const costPerInput = cachedLlmConfig.cost_per_input_token;
+                const costPerOutput = cachedLlmConfig.cost_per_output_token;
+
+                // If we have actual token data from the API, use it for cost calculation
+                if (actualInputTokens && actualOutputTokens) {
+                    const inputCost = actualInputTokens * costPerInput;
+                    const outputCost = actualOutputTokens * costPerOutput;
+                    actualCost = (inputCost + outputCost).toFixed(6);
+                } else {
+                    // Fallback: estimate based on number of commits reviewed
+                    const est = computeCostForCommits(reviews.length, cachedLlmConfig);
+                    actualInputTokens = est.inputTokens;
+                    actualOutputTokens = est.outputTokens;
+                    actualCost = est.cost;
+                }
             }
         } catch (err) {
             console.error('Cost summary computation failed:', err);
         }
+
+        // Reopen the same modal in results mode.
+        // Use a short delay to ensure Sveltestrap's Modal component has fully
+        // completed its internal close cycle before we reopen it.
+        costModalMode = 'results';
+        costModalLoading = false;
+        costEstimationError = null;
+        await new Promise(r => setTimeout(r, 300));
+        showCostModal = true;
     }
 
     function handleStreamEvent(data: any) {
@@ -834,7 +859,11 @@
             case 'complete':
                 progress = 100;
                 progressStatus = "Complete!";
-                // Final reviews are already added incrementally
+                // Capture actual token usage from the backend
+                if (data.total_token_usage) {
+                    actualInputTokens = data.total_token_usage.input_tokens || 0;
+                    actualOutputTokens = data.total_token_usage.output_tokens || 0;
+                }
                 break;
             case 'rate_limit':
                 // Show rate limit warning but continue
@@ -878,11 +907,6 @@
         }
     }
 
-    function handleGuidelinesSelect(event: Event) {
-        const target = event.target as HTMLInputElement;
-        selectedGuidelinesFile = target.files?.[0] || null;
-    }
-
     function clearResults() {
         reviews = [];
         error = "";
@@ -892,9 +916,7 @@
         sinceDate = "";
         untilDate = "";
         selectedFile = null;
-        selectedGuidelinesFile = null;
         if (fileInput) fileInput.value = '';
-        if (guidelinesInput) guidelinesInput.value = '';
         selectedGithubRepo = null;
         selectedAzdoRepo = null;
         repoSearchQuery = '';
@@ -917,6 +939,7 @@
         actualInputTokens = null;
         actualOutputTokens = null;
         actualCost = null;
+        costModalMode = 'estimation';
     }
 
     function cancelReview() {
@@ -1189,19 +1212,23 @@
             const response = await fetch(`${api_base}/auth/azuredevops/repos`, {
                 credentials: 'include'
             });
+            console.log('[AzDO] Repos response status:', response.status);
             if (response.ok) {
                 const data = await response.json();
-                azdoRepos = data.repos;
+                console.log('[AzDO] Loaded repos:', data.total_count, 'repos from', data.organization);
+                azdoRepos = data.repos || [];
             } else if (response.status === 401) {
                 azureDevOpsAuth = { authenticated: false, display_name: '', email: '', organization: '' };
                 azdoRepos = [];
                 toasts.push({ message: 'Azure DevOps session expired. Please sign in again.', color: 'warning' });
             } else {
                 const errData = await response.json();
+                console.error('[AzDO] Repos error:', errData);
                 toasts.push({ message: errData.detail || 'Failed to load repositories', color: 'danger' });
             }
         } catch (err) {
-            console.error('Failed to load Azure DevOps repos:', err);
+            console.error('[AzDO] Failed to load repos:', err);
+            toasts.push({ message: 'Failed to connect to server for repository list', color: 'danger' });
         } finally {
             loadingAzdoRepos = false;
         }
@@ -1229,47 +1256,53 @@
 
 <div id="main" class="main">
     <div class="header-section">
-        <h2><Icon name="file-code" /> Code Review Assistant</h2>
+        <h2><Icon name="file-code" style="font-size: 1.1em; vertical-align: -0.08em;" /> Code Review Assistant</h2>
         <p class="text-muted mb-0">Analyze Git commits with AI-powered insights</p>
+        <hr class="my-4" style="border-top: 3px solid #CDA788; opacity: 1;"/>
     </div>
 
     <!-- Configuration Panel -->
     <Card class="mb-4 config-card">
         <CardBody>
-            <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="d-flex justify-content-between align-items-start mb-3">
                 <CardTitle class="mb-0"><Icon name="gear" /> Review Configuration</CardTitle>
-                <div class="d-flex align-items-center gap-2">
-                    {#if githubAuth.authenticated}
-                        <div class="auth-chip auth-chip-success">
-                            {#if githubAuth.avatar_url}
-                                <img src={githubAuth.avatar_url} alt={githubAuth.username} class="github-avatar" />
-                            {/if}
-                            <Icon name="github" />
-                            <span>{githubAuth.username}</span>
-                            <button class="auth-chip-close" on:click={handleGitHubLogout} title="Sign out">
-                                <Icon name="x" />
-                            </button>
-                        </div>
-                    {:else}
-                        <Button size="sm" color="dark" outline on:click={handleGitHubLogin}>
-                            <Icon name="github" /> GitHub
-                        </Button>
-                    {/if}
-                    {#if azureDevOpsAuth.authenticated}
-                        <div class="auth-chip auth-chip-primary">
-                            <Icon name="cloud" />
-                            <span>{azureDevOpsAuth.display_name}</span>
-                            {#if azureDevOpsAuth.organization}
-                                <Badge color="info" class="ms-1" style="font-size: 0.7rem;">{azureDevOpsAuth.organization}</Badge>
-                            {/if}
-                            <button class="auth-chip-close" on:click={handleAzureDevOpsLogout} title="Sign out">
-                                <Icon name="x" />
-                            </button>
-                        </div>
-                    {:else}
-                        <Button size="sm" color="primary" outline on:click={() => showPATInput = true}>
-                            <Icon name="cloud" /> Azure DevOps
-                        </Button>
+                <div class="d-flex flex-column align-items-end gap-1">
+                    <div class="d-flex align-items-center gap-2">
+                        {#if githubAuth.authenticated}
+                            <div class="auth-chip auth-chip-success">
+                                {#if githubAuth.avatar_url}
+                                    <img src={githubAuth.avatar_url} alt={githubAuth.username} class="github-avatar" />
+                                {/if}
+                                <Icon name="github" />
+                                <span>{githubAuth.username}</span>
+                                <button class="auth-chip-close" on:click={handleGitHubLogout} title="Sign out">
+                                    <Icon name="x" />
+                                </button>
+                            </div>
+                        {:else}
+                            <Button size="sm" color="dark" on:click={handleGitHubLogin}>
+                                <Icon name="github" /> GitHub
+                            </Button>
+                        {/if}
+                        {#if azureDevOpsAuth.authenticated}
+                            <div class="auth-chip auth-chip-primary">
+                                <Icon name="cloud" />
+                                <span>{azureDevOpsAuth.display_name}</span>
+                                {#if azureDevOpsAuth.organization}
+                                    <Badge color="info" class="ms-1" style="font-size: 0.7rem;">{azureDevOpsAuth.organization}</Badge>
+                                {/if}
+                                <button class="auth-chip-close" on:click={handleAzureDevOpsLogout} title="Sign out">
+                                    <Icon name="x" />
+                                </button>
+                            </div>
+                        {:else}
+                            <Button size="sm" color="primary" on:click={() => showPATInput = true}>
+                                <Icon name="cloud" /> Azure DevOps
+                            </Button>
+                        {/if}
+                    </div>
+                    {#if !githubAuth.authenticated || !azureDevOpsAuth.authenticated}
+                        <small class="text-muted" style="font-size: 0.72rem;">Sign in for private repos</small>
                     {/if}
                 </div>
             </div>
@@ -1318,18 +1351,6 @@
                         </label>
                     {/if}
 
-                    <input
-                        type="radio"
-                        class="btn-check"
-                        bind:group={reviewMode}
-                        value="url"
-                        id="mode-url"
-                        on:change={clearResults}
-                    />
-                    <label class="btn btn-outline-primary" for="mode-url">
-                        <Icon name="link-45deg" /> Repository URL
-                    </label>
-
                     {#if azureDevOpsAuth.authenticated}
                         <input
                             type="radio"
@@ -1343,6 +1364,18 @@
                             <Icon name="cloud" /> Azure DevOps
                         </label>
                     {/if}
+
+                    <input
+                        type="radio"
+                        class="btn-check"
+                        bind:group={reviewMode}
+                        value="url"
+                        id="mode-url"
+                        on:change={clearResults}
+                    />
+                    <label class="btn btn-outline-primary" for="mode-url">
+                        <Icon name="link-45deg" /> Repository URL
+                    </label>
 
                     <input
                         type="radio"
@@ -1585,40 +1618,6 @@
                 </div>
             </div>
 
-            <!-- Optional Guidelines Document (compact) -->
-            <div class="row mb-3">
-                <div class="col">
-                    <label class="form-label">
-                        <Icon name="file-earmark-text" /> Review Guidelines <small class="text-muted">(optional)</small>
-                    </label>
-                    <div class="d-flex align-items-center gap-2">
-                        <input
-                            type="file"
-                            class="form-control"
-                            accept=".pdf,.docx,.txt"
-                            bind:this={guidelinesInput}
-                            on:change={handleGuidelinesSelect}
-                        />
-                        {#if selectedGuidelinesFile}
-                            <Badge color="success" class="text-nowrap">
-                                <Icon name="check-circle-fill" /> {selectedGuidelinesFile.name}
-                            </Badge>
-                            <Button
-                                size="sm"
-                                color="danger"
-                                outline
-                                on:click={() => {
-                                    selectedGuidelinesFile = null;
-                                    if (guidelinesInput) guidelinesInput.value = '';
-                                }}
-                            >
-                                <Icon name="x-circle" />
-                            </Button>
-                        {/if}
-                    </div>
-                </div>
-            </div>
-
             <div class="d-flex gap-2">
                 <Button color="primary" on:click={handleReview} disabled={loading} class="flex-grow-1">
                     <Icon name="play-fill" /> Start Review
@@ -1636,23 +1635,27 @@
         </CardBody>
     </Card>
 
-    <!-- Cost Estimation Modal -->
+    <!-- Cost Modal (switches between estimation and results mode) -->
     <CostEstimationModal
         isOpen={showCostModal}
         isLoading={costModalLoading}
-        mode="estimation"
-        inputTokens={costEstimation.inputTokens}
-        promptTokens={costEstimation.promptTokens}
-        sqlCodeTokens={costEstimation.codeTokens}
+        mode={costModalMode}
+        inputTokens={costModalMode === 'results' ? actualInputTokens : costEstimation.inputTokens}
+        promptTokens={costModalMode === 'results' ? null : costEstimation.promptTokens}
+        sqlCodeTokens={costModalMode === 'results' ? null : costEstimation.codeTokens}
         projectedOutputTokens={costEstimation.projectedOutputTokens}
         projectedCost={costEstimation.projectedCost}
+        actualOutputTokens={actualOutputTokens}
+        actualCost={actualCost}
+        timeTaken={actualTimeTaken}
         estimationError={costEstimationError}
         onConfirm={proceedWithReview}
         onCancel={closeCostModal}
         codeTokensLabel="Code Tokens"
         confirmButtonLabel="Proceed with Review"
         estimationHeader="Review Cost Estimation"
-        estimationDisclaimer={"* Projected tokens are estimated based on typical code review patterns (" + maxCommits + " commit" + (maxCommits !== 1 ? "s" : "") + ")."}
+        resultsHeader="Review Complete — Token Usage"
+        estimationDisclaimer={"* Estimated for " + maxCommits + " commit" + (maxCommits !== 1 ? "s" : "") + " based on typical diff sizes and output patterns. Actual usage may vary."}
         loadingMessage="Estimating review cost..."
     />
 
@@ -1742,25 +1745,28 @@
                     {#if actualInputTokens}
                         <span style="font-size: 0.85rem;">
                             <Icon name="arrow-right-circle" class="text-primary" />
-                            ~{actualInputTokens.toLocaleString()} input tokens
+                            {actualInputTokens.toLocaleString()} input tokens
                         </span>
                     {/if}
                     {#if actualOutputTokens}
                         <span style="font-size: 0.85rem;">
                             <Icon name="arrow-left-circle" class="text-info" />
-                            ~{actualOutputTokens.toLocaleString()} output tokens
+                            {actualOutputTokens.toLocaleString()} output tokens
                         </span>
                     {/if}
                     {#if actualCost}
                         <span style="font-size: 0.85rem;">
                             <Icon name="currency-dollar" class="text-success" />
-                            ~${actualCost} USD
+                            ${actualCost} USD
                         </span>
                     {/if}
                     <span style="font-size: 0.85rem;">
                         <Icon name="clock" class="text-muted" />
                         {actualTimeTaken.toFixed(1)}s
                     </span>
+                    <button class="btn btn-sm btn-outline-secondary" style="font-size: 0.75rem; padding: 0.15rem 0.5rem;" on:click={() => { costModalMode = 'results'; showCostModal = true; }}>
+                        <Icon name="bar-chart" /> Details
+                    </button>
                 </div>
             </CardBody>
         </Card>
@@ -1816,8 +1822,8 @@
                                                     <td><code class="file-path">{finding.file}</code></td>
                                                     <td>
                                                         <div>{finding.message}</div>
-                                                        {#if finding.solution}
-                                                            <div class="mt-2">
+                                                        <div class="d-flex gap-2 mt-2">
+                                                            {#if finding.solution}
                                                                 <Button
                                                                     size="sm"
                                                                     color="info"
@@ -1827,7 +1833,18 @@
                                                                     <Icon name={expandedSolutions.has(findingId) ? "chevron-up" : "chevron-down"} />
                                                                     {expandedSolutions.has(findingId) ? "Hide" : "View"} Solution
                                                                 </Button>
-                                                            </div>
+                                                            {/if}
+                                                            <Button
+                                                                size="sm"
+                                                                color="primary"
+                                                                outline
+                                                                on:click={() => openFindingChat(findingId, buildCodeFindingContext(review, finding))}
+                                                            >
+                                                                <Icon name={activeFindingId === findingId && isChatDrawerOpen ? "chat-square-text-fill" : "chat-square-text"} />
+                                                                Ask Chat
+                                                            </Button>
+                                                        </div>
+                                                        {#if finding.solution}
                                                             <Collapse isOpen={expandedSolutions.has(findingId)}>
                                                                 <div class="solution-box mt-2">
                                                                     {#if finding.original_code}
@@ -1854,17 +1871,6 @@
                                                                 </div>
                                                             </Collapse>
                                                         {/if}
-                                                        <div class="mt-2">
-                                                            <Button
-                                                                size="sm"
-                                                                color="primary"
-                                                                outline
-                                                                on:click={() => openFindingChat(findingId, buildCodeFindingContext(review, finding))}
-                                                            >
-                                                                <Icon name={activeFindingId === findingId && isChatDrawerOpen ? "chat-square-text-fill" : "chat-square-text"} />
-                                                                Ask Chat
-                                                            </Button>
-                                                        </div>
                                                     </td>
                                                 </tr>
                                             {/each}
@@ -1933,8 +1939,8 @@
                                                                 {/if}
                                                                 <p class="mb-1 mt-1 security-description">{secFinding.description}</p>
                                                                 <small class="text-muted"><Icon name="lightbulb" /> {secFinding.recommendation}</small>
-                                                                {#if secFinding.solution}
-                                                                    <div class="mt-2">
+                                                                <div class="d-flex gap-2 mt-2">
+                                                                    {#if secFinding.solution}
                                                                         <Button
                                                                             size="sm"
                                                                             color="info"
@@ -1944,7 +1950,18 @@
                                                                             <Icon name={expandedSolutions.has(secFindingId) ? "chevron-up" : "chevron-down"} />
                                                                             {expandedSolutions.has(secFindingId) ? "Hide" : "View"} Solution
                                                                         </Button>
-                                                                    </div>
+                                                                    {/if}
+                                                                    <Button
+                                                                        size="sm"
+                                                                        color="primary"
+                                                                        outline
+                                                                        on:click={() => openFindingChat(secFindingId, buildSecurityFindingContext(review, secFinding))}
+                                                                    >
+                                                                        <Icon name={activeFindingId === secFindingId && isChatDrawerOpen ? "chat-square-text-fill" : "chat-square-text"} />
+                                                                        Ask Chat
+                                                                    </Button>
+                                                                </div>
+                                                                {#if secFinding.solution}
                                                                     <Collapse isOpen={expandedSolutions.has(secFindingId)}>
                                                                         <div class="solution-box mt-2">
                                                                             {#if secFinding.original_code}
@@ -1971,17 +1988,6 @@
                                                                         </div>
                                                                     </Collapse>
                                                                 {/if}
-                                                                <div class="mt-2">
-                                                                    <Button
-                                                                        size="sm"
-                                                                        color="primary"
-                                                                        outline
-                                                                        on:click={() => openFindingChat(secFindingId, buildSecurityFindingContext(review, secFinding))}
-                                                                    >
-                                                                        <Icon name={activeFindingId === secFindingId && isChatDrawerOpen ? "chat-square-text-fill" : "chat-square-text"} />
-                                                                        Ask Chat
-                                                                    </Button>
-                                                                </div>
                                                             </td>
                                                         </tr>
                                                     {/each}
@@ -2094,7 +2100,7 @@
     }
 
     .header-section h2 {
-        color: #2c3e50;
+        color: #0a58ca;
         margin-bottom: 0.25rem;
     }
 
@@ -2191,7 +2197,7 @@
         height: 26px;
         border-radius: 50%;
         background: rgba(255,255,255,0.15);
-        color: #94a3b8;
+        color: #f1f5f9;
         font-size: 0.75rem;
         font-weight: 700;
         flex-shrink: 0;
@@ -2207,7 +2213,7 @@
     }
 
     .commit-message-header {
-        color: #cbd5e1;
+        color: #f1f5f9;
         font-size: 0.85rem;
         overflow: hidden;
         text-overflow: ellipsis;

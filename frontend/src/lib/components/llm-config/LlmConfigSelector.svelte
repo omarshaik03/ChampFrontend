@@ -139,7 +139,7 @@
                                         </Badge>
                                     </div>
                                     {#if config.config?.model}
-                                        <small class="text-muted d-block mt-1">
+                                        <small class="text-white d-block mt-1">
                                             Model: {config.config.model}
                                         </small>
                                     {/if}
@@ -311,7 +311,7 @@
     
     .config-name {
         font-size: 1rem;
-        font-weight: 600;
+        font-weight: 400;
         color: #212529;
         white-space: nowrap;
         flex: 1;
@@ -338,5 +338,15 @@
     
     :global(.dropdown-item-text:hover) {
         background-color: transparent;
+    }
+
+    :global(.dropdown-item.active) {
+        background-color: #83b5ff;
+        color: #212529;
+    }
+
+    :global(.dropdown-item.active:hover) {
+        background-color: #bee5eb;
+        color: #212529;
     }
 </style>

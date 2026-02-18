@@ -53,28 +53,28 @@
 	}
 </script>
 
-<NavbarComponent dark color="dark" expand="md" class="shadow-lg py-2 bg-dark">
+<NavbarComponent dark expand="md" class="shadow-lg py-2 custom-navbar">
 	<NavbarBrand href="/" class="d-flex align-items-center">
 		<!--<img src="/images/champLogo2.png" alt="Champ Logo" class="mx-1" style="height: 50px; width: auto; border-radius: 8px;" title="AI Marketplace" />-->
-		<img src="/images/CognizantLogoWhite.png" alt="Cognizant" class="mx-1" style="height: 50px; width: auto;" title="Cognizant" />
+		<img src="/images/CognizantLogoWhite.png" alt="Cognizant" class="mx-1 logo-img" title="Cognizant" />
 	</NavbarBrand>
 	<Nav class="ml-auto d-flex gap-3" navbar>
 		{#if authenticated}
 			<NavItem class="d-flex align-items-center">
-				<div class="d-flex align-items-center px-3 text-light">
+				<div class="d-flex align-items-center px-3 text-light welcome-text">
 					<Icon name="person-circle" class="me-2 fs-5" />
-					<span>Welcome, {userName}</span>
+					<span>Welcome, <span class="fw-normal">{userName}</span></span>
 				</div>
 			</NavItem>
 		{/if}
 		
 		<NavItem class="d-flex align-items-center">
 			<Dropdown theme="light" direction="down">
-				<DropdownToggle color="light" caret>
+				<DropdownToggle color="outline-light" caret class="app-selector-btn">
 					<Icon name="grid-3x3-gap" class="me-1" />
 					{appAlias}
 				</DropdownToggle>
-				<DropdownMenu>
+				<DropdownMenu class="shadow-sm border-0 mt-2 rounded-3">
 					{#if authenticated}
 						{#each Object.keys(APPS) as app}
 							{#if isAppAccessible(app, allowedApps)}
@@ -124,8 +124,8 @@
 		{:else}
 			<NavItem class="d-flex align-items-center">
 				<Button 
+					color="outline-light"
 					class="login-btn"
-					style="background-color: #6c757d; border: none; color: #fff; transition: background-color 0.3s ease;"
 					href="/auth/login"
 				>
 					<Icon name="box-arrow-in-right" class="me-1" />
@@ -200,8 +200,10 @@
 </NavbarComponent>
 
 <style>
-	:global(.navbar) {
+	:global(.navbar), :global(.custom-navbar) {
 		padding: 0.75rem 1rem;
+		background-color: #2b3035 !important;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 	}
 	
 	:global(.navbar-brand) {
@@ -219,18 +221,61 @@
 	}
 	
 	:global(.login-btn:hover), :global(.logout-btn:hover) {
-		background-color: #5a6268 !important;
+		background-color: rgba(255, 255, 255, 0.1) !important;
+		transform: translateY(-1px);
 	}
 	
-	/* Soften the harsh white borders on outline buttons */
+	/* Modern sleek buttons */
 	:global(.btn-outline-light) {
-		border-color: rgba(255, 255, 255, 0.5) !important; /* Reduce opacity for softer borders */
-		transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease;
+		border-color: rgba(255, 255, 255, 0.2) !important;
+		color: rgba(255, 255, 255, 0.95) !important;
+		border-radius: 50px !important; /* Pill shape */
+		padding: 0.375rem 1.25rem;
+		transition: all 0.3s ease;
+		background: rgba(255, 255, 255, 0.02);
+		backdrop-filter: blur(5px);
 	}
-		:global(.btn-outline-light:focus) {
-		box-shadow: 0 0 0 0.25rem rgba(255, 255, 255, 0.2) !important; /* Softer focus outline */
+
+	:global(.btn-outline-light:hover) {
+		background-color: rgba(255, 255, 255, 0.15) !important;
+		border-color: rgba(255, 255, 255, 0.8) !important;
+		color: #fff !important;
+		transform: translateY(-1px);
+		box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+	}
+
+	:global(.btn-outline-light:active) {
+		transform: translateY(0);
+		box-shadow: none;
+	}
+		
+	:global(.btn-outline-light:focus) {
+		box-shadow: 0 0 0 0.25rem rgba(255, 255, 255, 0.1) !important;
+	}
+
+	.logo-img {
+		height: 40px; 
+		width: auto; 
+		transition: opacity 0.2s ease;
 	}
 	
+	.logo-img:hover {
+		opacity: 0.9;
+	}
+	
+	.welcome-text {
+		opacity: 0.9;
+		font-size: 0.95rem;
+		letter-spacing: 0.3px;
+	}
+	
+	:global(.app-selector-btn) {
+		min-width: 140px;
+		display: flex !important;
+		align-items: center;
+		justify-content: center;
+	}
+
 	/* Cart dropdown styles */
 	.cart-dropdown {
 		position: relative;

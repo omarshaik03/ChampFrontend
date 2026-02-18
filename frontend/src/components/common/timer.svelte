@@ -15,20 +15,29 @@
         }
     }
 
-    function startTimer(): void {
+    export function start(): void {
+        timer = 0;
         startTime = Date.now();
+        clearInterval(timerInterval);
         timerInterval = setInterval(() => {
             if (startTime) {
-                timer = (Date.now() - startTime) / 1000;
+                timer = Math.round((Date.now() - startTime) / 1000);
             }
-        }, 100);
+        }, 1000);
+    }
+
+    export function stop(): number {
+        clearInterval(timerInterval);
+        let tempTimer = timer;
+        return tempTimer;
+    }
+
+    function startTimer(): void {
+        start();
     }
 
     function stopTimer(): number {
-        clearInterval(timerInterval);
-        let tempTimer = timer;
-        timer = 0;
-        return tempTimer
+        return stop();
     }
 </script>
 

@@ -698,7 +698,7 @@
                                 {#each endpointOptions as option}
                                     <DropdownItem on:click={() => {selectedEndpoint = option.value}}>
                                         <div>
-                                            <strong>{option.label}</strong>
+                                            {option.label}
                                             <br>
                                             <small class="text-muted">{option.description}</small>
                                         </div>
@@ -709,8 +709,10 @@
                     </FormGroup>
                     <hr>
                     
-                    <label class="mb-2">Select Initial and Target SQL Language:</label>
-                    <span class="text-danger">*</span>
+                    <label for="sql-input-dropdown" class="mb-2">
+                        Select Initial and Target SQL Language:
+                        <span class="text-danger">*</span>
+                    </label>
                     <div class="d-flex align-items-center gap-2 mb-3">
                         <Dropdown direction="down" class="flex-grow-1" id="sql-dropdown">
                             <DropdownToggle caret class="btn btn-styled btn-styled-primary w-100">
@@ -791,10 +793,10 @@
         </div>
         <div class="conversion-main">
             <div class="header-section">
-                <h2><Icon name={codeConversionLogo} /> SQL Code Conversion</h2>
+                <h2><Icon name={codeConversionLogo} style="font-size: 1.1em; vertical-align: -0.08em;" /> SQL Convert</h2>
                 <p class="text-muted">Convert between SQL dialects using AI.</p>
             </div>
-            <hr class="my-4"/>
+            <hr class="my-4" style="border-top: 3px solid #CDA788; opacity: 1;"/>
             {#if sqlContent
                 && sqlContent.inputContent 
                 && sqlContent.outputContent 
@@ -887,7 +889,7 @@
     }
 
     .header-section h2 {
-        color: #2c3e50;
+        color: #0a58ca;
         margin-bottom: 0.5rem;
     }
 
@@ -937,8 +939,12 @@
 
     .conversion-main {
         flex: 1;
-        padding: 10px 0 0 10px;
+        padding: 20px;
         min-height: 100%;
+        border: 1px solid rgba(108, 117, 125, 0.2);
+        border-radius: 8px;
+        margin: 20px;
+        background-color: rgba(255, 255, 255, 0.3);
     }
 
     .resize-handle {
@@ -1109,7 +1115,7 @@
         margin-right: 1rem;
         border-radius: 4px;
         transition: all 0.3s ease;
-        font-weight: 600;
+        font-weight: 400;
         cursor: pointer;
     }
 
@@ -1166,5 +1172,22 @@
         transform: translateY(-2px);
         box-shadow: 0 8px 20px rgba(13, 110, 253, 0.4);
         color: white;
+    }
+
+    /* Laptop Optimization - Simulate 1080p density on smaller screens */
+    @media (max-width: 1536px) {
+        .conversion-layout {
+            zoom: 0.8;
+        }
+
+        /* Adjust sticky positioning to account for zoom scaling */
+        .panel-group {
+            top: calc((var(--cc-navbar-height, 0px) / 0.8) + 20px);
+        }
+
+        /* Fix max-height to fill screen when zoomed */
+        .conversion-panel-content {
+            max-height: calc((100vh - var(--cc-navbar-height, 0px) - 28px) / 0.8);
+        }
     }
 </style>

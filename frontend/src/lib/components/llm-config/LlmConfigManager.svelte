@@ -5,10 +5,6 @@
         Button, 
         Table,
         Badge,
-        Modal,
-        ModalHeader,
-        ModalBody,
-        ModalFooter,
         Alert,
         Spinner
     } from "@sveltestrap/sveltestrap";
@@ -279,33 +275,38 @@
     </CardBody>
 </Card>
 
-<!-- Delete Confirmation Modal -->
-<Modal isOpen={showDeleteModal} toggle={closeDeleteModal}>
-    <ModalHeader toggle={closeDeleteModal}>
-        Confirm Delete
-    </ModalHeader>
-    <ModalBody>
-        <Alert color="warning">
-            <strong>Are you sure you want to delete this configuration?</strong>
-        </Alert>
-        {#if deletingConfig}
-            <p>
-                This will permanently delete the configuration 
-                <strong>"{deletingConfig.name}"</strong> 
-                for {getProviderDisplayName(deletingConfig.provider)}.
-            </p>
-            <p class="text-muted mb-0">This action cannot be undone.</p>
-        {/if}
-    </ModalBody>
-    <ModalFooter>
-        <Button color="secondary" on:click={closeDeleteModal}>
-            Cancel
-        </Button>
-        <Button color="danger" on:click={confirmDelete}>
-            Delete Configuration
-        </Button>
-    </ModalFooter>
-</Modal>
+
+<!-- Delete Confirmation Modal (Custom implementation to avoid library z-index issues) -->
+{#if showDeleteModal}
+    <div class="delete-modal-backdrop"></div>
+    <div class="delete-modal-dialog">
+        <div class="delete-modal-header">
+            <h5 class="mb-0">Confirm Delete</h5>
+            <button type="button" class="btn-close" aria-label="Close" on:click={closeDeleteModal}></button>
+        </div>
+        <div class="delete-modal-body">
+            <Alert color="warning">
+                <strong>Are you sure you want to delete this configuration?</strong>
+            </Alert>
+            {#if deletingConfig}
+                <p>
+                    This will permanently delete the configuration 
+                    <strong>"{deletingConfig.name}"</strong> 
+                    for {getProviderDisplayName(deletingConfig.provider)}.
+                </p>
+                <p class="text-muted mb-0">This action cannot be undone.</p>
+            {/if}
+        </div>
+        <div class="delete-modal-footer">
+            <Button color="secondary" on:click={closeDeleteModal}>
+                Cancel
+            </Button>
+            <Button color="danger" on:click={confirmDelete}>
+                Delete Configuration
+            </Button>
+        </div>
+    </div>
+{/if}
 
 <style>
     .table-active {
@@ -316,7 +317,65 @@
         border-radius: 0.375rem;
     }
     
-    :global(.modal-lg) {
-        max-width: 700px;
+    /* Custom Delete Modal Styles */
+    .delete-modal-backdrop {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background-color: rgba(0, 0, 0, 0.5);
+        z-index: 1060;
+    }
+
+    .delete-modal-dialog {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%); /* This works here because it's a child of no-transform parent or fixed relative to viewport if outside */
+        width: 90%;
+        max-width: 500px;
+        background-color: #fff;
+        border-radius: 0.5rem;
+        box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+        z-index: 1061;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .delete-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem;
+        border-bottom: 1px solid #dee2e6;
+    }
+
+    .delete-modal-body {
+        padding: 1rem;
+        overflow-y: auto;
+    }
+
+    .delete-modal-footer {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        padding: 1rem;
+        border-top: 1px solid #dee2e6;
+        gap: 0.5rem;
+    }
+
+    .btn-close {
+        box-sizing: content-box;
+        width: 1em;
+        height: 1em;
+        padding: 0.25em 0.25em;
+        color: #000;
+        background: transparent url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23000'%3e%3cpath d='M.293.293a1 1 0 0 1 1.414 0L8 6.586 14.293.293a1 1 0 1 1 1.414 1.414L9.414 8l6.293 6.293a1 1 0 0 1-1.414 1.414L8 9.414l-6.293 6.293a1 1 0 0 1-1.414-1.414L6.586 8 .293 1.707a1 1 0 0 1 0-1.414z'/%3e%3c/svg%3e") center/1em auto no-repeat;
+        border: 0;
+        border-radius: 0.25rem;
+        opacity: 0.5;
+        cursor: pointer;
     }
 </style>

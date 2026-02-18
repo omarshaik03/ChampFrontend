@@ -76,14 +76,16 @@
                     <div>Total Input Tokens:</div>
                     <span class="value">{inputTokens !== null ? inputTokens.toLocaleString() : 'N/A'}</span>
                 </div>
-                <div class="estimation-row sub-row">
-                    <div>└─ Prompt Tokens:</div>
-                    <span class="value">{promptTokens !== null ? promptTokens.toLocaleString() : 'N/A'}</span>
-                </div>
-                <div class="estimation-row sub-row">
-                    <div>└─ {codeTokensLabel}:</div>
-                    <span class="value">{sqlCodeTokens !== null ? sqlCodeTokens.toLocaleString() : 'N/A'}</span>
-                </div>
+                {#if promptTokens !== null || sqlCodeTokens !== null}
+                    <div class="estimation-row sub-row">
+                        <div>└─ Prompt Tokens:</div>
+                        <span class="value">{promptTokens !== null ? promptTokens.toLocaleString() : 'N/A'}</span>
+                    </div>
+                    <div class="estimation-row sub-row">
+                        <div>└─ {codeTokensLabel}:</div>
+                        <span class="value">{sqlCodeTokens !== null ? sqlCodeTokens.toLocaleString() : 'N/A'}</span>
+                    </div>
+                {/if}
                 <div class="estimation-row">
                     <div>{isEstimationMode ? 'Projected' : 'Actual'} Output Tokens:</div>
                     <span class="value">

@@ -304,6 +304,11 @@
 <ToastNotifications position="top-right" maxToasts={5} />
 
 <div id="main" class="main">
+    <div class="header-section">
+        <h2><Icon name="file-earmark-text" /> Document Insights</h2>
+        <p class="text-muted">Query your documents using AI.</p>
+    </div>
+    <hr class="my-4" style="border-top: 10px solid #CDA788; opacity: 1;"/>
     <div class="chat-container">
       {#if chatContents.length > 0}
         <!-- First message -->
@@ -457,4 +462,14 @@
     :root {
 		--bottom-div-height: 150px;
 	}
+
+    .header-section {
+        text-align: center;
+        margin: 22px 0 10px;
+    }
+
+    .header-section h2 {
+        color: #0a58ca;
+        margin-bottom: 0.5rem;
+    }
 </style>

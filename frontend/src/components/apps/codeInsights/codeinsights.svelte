@@ -529,17 +529,17 @@
                             </div>
                         </div>
                         <div class="mb-3">
-                            <span>Upload a report file:</span><span class="text-danger"> *</span>
+                            <span>Upload a report file:</span> <span class="text-danger">*</span>
                             <div class="input-group">
                                 <input class="form-control" type="file" bind:files={reportFileInput}/>
                             </div>
                         </div>
                         
-                        <h6 class="mb-2">LLM Configuration</h6>
+                        <span class="mb-2 d-block">LLM Configuration</span>
                         <LlmConfigSelector />
                         
                         <div class="mt-3 mb-3">
-                            <span>Access Key:</span>
+                            <span>Access Key:&nbsp;</span><span class="text-danger">*</span>
                             <div class="input-group">
                                 <input class="form-control" type="password" bind:value={accessKey} placeholder="Enter access key" />
                             </div>
@@ -651,10 +651,10 @@
         </div>
         <div class="insights-main">
             <div class="header-section">
-                <h2><Icon name={codeInsightsLogo} /> Code Insights</h2>
+                <h2><Icon name={codeInsightsLogo} style="font-size: 1.1em; vertical-align: -0.08em;" /> Code Insights</h2>
                 <p class="text-muted">Analyze and remediate code using AI.</p>
             </div>
-            <hr class="my-4"/>
+            <hr class="my-4" style="border-top: 3px solid #CDA788; opacity: 1;"/>
             {#if selectedFileName == ''}
                 <div class="text-center mt-4">
                     <h3>Select a file to view</h3>
@@ -745,7 +745,7 @@
     .panel-group {
         display: flex;
         align-items: stretch;
-        height: fit-content;
+        height: calc(100vh - var(--ci-navbar-height, 0px) - 40px);
         position: sticky;
         top: calc(var(--ci-navbar-height, 0px) + 20px);
         align-self: flex-start;
@@ -759,8 +759,14 @@
 
     .insights-main {
         flex: 1;
-        padding: 10px 0 0 10px;
-        min-height: 100%;
+        padding: 20px;
+        min-height: calc(100vh - var(--ci-navbar-height, 0px) - 40px);
+        border: 1px solid rgba(108, 117, 125, 0.2);
+        border-radius: 8px;
+        margin: 20px;
+        background-color: rgba(255, 255, 255, 0.3);
+        display: flex;
+        flex-direction: column;
     }
 
     .resize-handle {
@@ -784,7 +790,7 @@
     }
 
     .header-section h2 {
-        color: #2c3e50;
+        color: #0a58ca;
         margin-bottom: 0.5rem;
     }
 
@@ -831,12 +837,17 @@
     }
 
     :global(.btn-styled-primary) {
-        background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
+        background: linear-gradient(135deg, #0d6efd 0%, #0b5ed7 100%) padding-box,
+                    linear-gradient(45deg, #0dcaf0 0%, #6610f2 100%) border-box;
+        border: 2px solid transparent;
         color: white;
+        border-radius: 8px;
     }
 
     :global(.btn-styled-primary:hover:not(:disabled)) {
-        background: linear-gradient(135deg, #388bff 0%, #0d6efd 100%); /* Slightly lighter on hover */
+        background: linear-gradient(135deg, #388bff 0%, #0d6efd 100%) padding-box,
+                    linear-gradient(45deg, #0dcaf0 0%, #6610f2 100%) border-box;
+        border: 2px solid transparent;
         transform: translateY(-2px);
         box-shadow: 0 6px 12px rgba(13, 110, 253, 0.3);
         color: white;
@@ -874,7 +885,7 @@
         margin-right: 1rem;
         border-radius: 4px;
         transition: all 0.3s ease;
-        font-weight: 600;
+        font-weight: 400;
         cursor: pointer;
     }
 
